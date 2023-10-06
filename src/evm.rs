@@ -11,9 +11,7 @@ use foundry_evm::executor::{fork::CreateFork, Executor};
 use foundry_evm::executor::{opts::EvmOpts, Backend, ExecutorBuilder};
 use foundry_evm::trace::identifier::{EtherscanIdentifier, SignaturesIdentifier};
 use foundry_evm::trace::node::CallTraceNode;
-use foundry_evm::trace::{
-    CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder, RawOrDecodedCall,
-};
+use foundry_evm::trace::{CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder};
 use foundry_evm::utils::{h160_to_b160, u256_to_ru256};
 use foundry_evm::CallKind;
 use revm::db::DatabaseRef;
@@ -46,8 +44,9 @@ pub struct CallRawResult {
 impl From<CallTraceNode> for CallTrace {
     fn from(item: CallTraceNode) -> Self {
         let data = match item.trace.kind {
-            CallKind::Call | CallKind::StaticCall =>{
-                let first_4_bytes: Vec<u8> = item.trace.data.to_raw().iter().take(4).cloned().collect();
+            CallKind::Call | CallKind::StaticCall => {
+                let first_4_bytes: Vec<u8> =
+                    item.trace.data.to_raw().iter().take(4).cloned().collect();
                 Bytes::from_iter(first_4_bytes)
             }
             _ => Bytes::from_iter(vec![0]),
@@ -57,7 +56,7 @@ impl From<CallTraceNode> for CallTrace {
             from: item.trace.caller,
             to: item.trace.address,
             value: item.trace.value,
-            functionId: data,
+            function_id: data,
         }
     }
 }
