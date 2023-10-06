@@ -8,6 +8,7 @@ use ethers::core::types::Log;
 use ethers::types::transaction::eip2930::AccessList;
 use ethers::types::Bytes;
 use foundry_evm::CallKind;
+use foundry_evm::trace::RawOrDecodedCall;
 use revm::interpreter::InstructionResult;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -117,6 +118,7 @@ pub struct CallTrace {
     pub call_type: CallKind,
     pub from: Address,
     pub to: Address,
+    pub functionId: Bytes,
     pub value: Uint,
 }
 
