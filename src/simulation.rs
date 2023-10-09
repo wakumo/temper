@@ -117,6 +117,7 @@ pub struct CallTrace {
     pub call_type: CallKind,
     pub from: Address,
     pub to: Address,
+    pub function_signature: Bytes,
     pub value: Uint,
 }
 

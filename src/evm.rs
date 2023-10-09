@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::errors::{EvmError, OverrideError};
+use crate::simulation::CallTrace;
 use ethers::abi::{Address, Hash, Uint};
 use ethers::core::types::Log;
 use ethers::types::transaction::eip2930::AccessList;
@@ -11,13 +13,11 @@ use foundry_evm::trace::identifier::{EtherscanIdentifier, SignaturesIdentifier};
 use foundry_evm::trace::node::CallTraceNode;
 use foundry_evm::trace::{CallTraceArena, CallTraceDecoder, CallTraceDecoderBuilder};
 use foundry_evm::utils::{h160_to_b160, u256_to_ru256};
+use foundry_evm::CallKind;
 use revm::db::DatabaseRef;
 use revm::interpreter::InstructionResult;
 use revm::primitives::{Account, Bytecode, Env, StorageSlot};
 use revm::DatabaseCommit;
-
-use crate::errors::{EvmError, OverrideError};
-use crate::simulation::CallTrace;
 
 #[derive(Debug, Clone)]
 pub struct CallRawRequest {
@@ -43,11 +43,20 @@ pub struct CallRawResult {
 
 impl From<CallTraceNode> for CallTrace {
     fn from(item: CallTraceNode) -> Self {
+        let function_signature = match item.trace.kind {
+            CallKind::Call | CallKind::StaticCall => {
+                let first_4_bytes: Vec<u8> =
+                    item.trace.data.to_raw().iter().take(4).cloned().collect();
+                Bytes::from_iter(first_4_bytes)
+            }
+            _ => Bytes::from(vec![0]),
+        };
         CallTrace {
             call_type: item.trace.kind,
             from: item.trace.caller,
             to: item.trace.address,
             value: item.trace.value,
+            function_signature: function_signature,
         }
     }
 }
