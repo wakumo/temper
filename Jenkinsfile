@@ -8,13 +8,13 @@ pipeline {
     stages {
       
       stage('Cloning Git') {
-        // when {branch 'develop'}
+        // when {branch 'main'}
         steps {
-          git branch: 'develop', credentialsId: 'github-develop', url: 'https://github.com/wakumo/temper.git'
+          git branch: 'main', credentialsId: 'github-develop', url: 'https://github.com/wakumo/temper.git'
         }
       }
       stage('Building image') {
-        // when {branch 'develop'}
+        // when {branch 'main'}
         steps{
           script {
             dockerImage = docker.build imagename
@@ -22,7 +22,7 @@ pipeline {
         }
       }
       stage('Push Image') {
-        // when {branch 'develop'}
+        // when {branch 'main'}
         steps{
           script {
             // docker.withRegistry(ecrurl, ecrcredentials ) {
@@ -34,7 +34,7 @@ pipeline {
         }
       }
       stage('Kubernetes') {
-        // when {branch 'develop'}
+        // when {branch 'main'}
         steps{
           script{
             withKubeConfig(credentialsId: 'wkm_local_credential_deploy', namespace: 'ethereum-tx', serverUrl: 'https://10.123.31.100:6443') {
