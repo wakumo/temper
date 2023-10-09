@@ -43,20 +43,20 @@ pub struct CallRawResult {
 
 impl From<CallTraceNode> for CallTrace {
     fn from(item: CallTraceNode) -> Self {
-        let data = match item.trace.kind {
+        let function_signature = match item.trace.kind {
             CallKind::Call | CallKind::StaticCall => {
                 let first_4_bytes: Vec<u8> =
                     item.trace.data.to_raw().iter().take(4).cloned().collect();
                 Bytes::from_iter(first_4_bytes)
             }
-            _ => Bytes::from_iter(vec![0]),
+            _ => Bytes::from(vec![0]),
         };
         CallTrace {
             call_type: item.trace.kind,
             from: item.trace.caller,
             to: item.trace.address,
             value: item.trace.value,
-            function_id: data,
+            function_signature: function_signature,
         }
     }
 }
