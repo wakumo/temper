@@ -1,3 +1,4 @@
+use std::env;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -147,34 +148,49 @@ impl<'de> Deserialize<'de> for PermissiveUint {
     }
 }
 
-fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
-    match chain_id {
-        // ethereum
-        1 => Ok("https://rpc.ankr.com/eth".to_string()),
-        5 => Ok("https://rpc.ankr.com/eth_goerli".to_string()),
-        11155111 => Ok("https://sepolia.gateway.tenderly.co".to_string()),
-        // polygon
-        137 => Ok("https://rpc.ankr.com/polygon".to_string()),
-        80001 => Ok("https://rpc.ankr.com/polygon_mumbai".to_string()),
-        // avalanche
-        43114 => Ok("https://api.avax.network/ext/bc/C/rpc".to_string()),
-        43113 => Ok("https://api.avax-test.network/ext/bc/C/rpc".to_string()),
-        // fantom
-        250 => Ok("https://rpcapi.fantom.network/".to_string()),
-        4002 => Ok("https://rpc.testnet.fantom.network/".to_string()),
-        // xdai
-        100 => Ok("https://rpc.xdaichain.com/".to_string()),
-        // bsc
-        56 => Ok("https://rpc.ankr.com/bsc".to_string()),
-        97 => Ok("https://rpc.ankr.com/bsc_testnet_chapel".to_string()),
-        // arbitrum
-        42161 => Ok("https://arb1.arbitrum.io/rpc".to_string()),
-        421613 => Ok("https://goerli-rollup.arbitrum.io/rpc".to_string()),
-        // optimism
-        10 => Ok("https://mainnet.optimism.io/".to_string()),
-        420 => Ok("https://goerli.optimism.io/".to_string()),
-        _ => Err(NoURLForChainIdError.into()),
+fn construct_url(base_url: &str) -> Result<String, Rejection> {
+    let mut url = base_url.to_string();
+
+    if url.starts_with("https://rpc.ankr.com") {
+        if let Ok(token) = env::var("ANKR_ACCESS_TOKEN") {
+            // Append the access token to the URL
+            url.push_str(&format!("/{}", token));
+        }
     }
+
+    Ok(url)
+}
+
+fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
+    let url = match chain_id {
+        // Ethereum
+        1 => "https://rpc.ankr.com/eth",
+        5 => "https://rpc.ankr.com/eth_goerli",
+        11155111 => "https://sepolia.gateway.tenderly.co",
+        // Polygon
+        137 => "https://rpc.ankr.com/polygon",
+        80001 => "https://rpc.ankr.com/polygon_mumbai",
+        // Avalanche
+        43114 => "https://api.avax.network/ext/bc/C/rpc",
+        43113 => "https://api.avax-test.network/ext/bc/C/rpc",
+        // Fantom
+        250 => "https://rpcapi.fantom.network/",
+        4002 => "https://rpc.testnet.fantom.network/",
+        // xDai
+        100 => "https://rpc.xdaichain.com/",
+        // BSC
+        56 => "https://rpc.ankr.com/bsc",
+        97 => "https://rpc.ankr.com/bsc_testnet_chapel",
+        // Arbitrum
+        42161 => "https://arb1.arbitrum.io/rpc",
+        421613 => "https://goerli-rollup.arbitrum.io/rpc",
+        // Optimism
+        10 => "https://mainnet.optimism.io/",
+        420 => "https://goerli.optimism.io/",
+        _ => return Err(NoURLForChainIdError.into()),
+    };
+
+    construct_url(url)
 }
 
 async fn run(
