@@ -170,6 +170,9 @@ fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
         // Polygon
         137 => "https://rpc.ankr.com/polygon",
         80001 => "https://rpc.ankr.com/polygon_mumbai",
+        // Polygon zkEVM
+        1101 => "https://rpc.ankr.com/polygon_zkevm",
+        1442 => "https://rpc.ankr.com/polygon_zkevm_testnet",
         // Avalanche
         43114 => "https://api.avax.network/ext/bc/C/rpc",
         43113 => "https://api.avax-test.network/ext/bc/C/rpc",
