@@ -188,8 +188,8 @@ fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
         42161 => "https://arb1.arbitrum.io/rpc",
         421613 => "https://goerli-rollup.arbitrum.io/rpc",
         // Optimism
-        10 => "https://mainnet.optimism.io/",
-        420 => "https://goerli.optimism.io/",
+        10 => "https://rpc.ankr.com/optimism",
+        420 => "https://rpc.ankr.com/optimism_sepolia",
         _ => return Err(NoURLForChainIdError.into()),
     };
 
