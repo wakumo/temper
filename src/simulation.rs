@@ -25,6 +25,7 @@ use crate::SharedSimulationState;
 
 use super::config::Config;
 use super::evm::{CallRawRequest, Evm};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -245,6 +246,9 @@ async fn run(
 }
 
 pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<Json, Rejection> {
+    let start_time = Instant::now();
+
+    // Your existing code here
     let fork_url = config
         .fork_url
         .unwrap_or(chain_id_to_fork_url(transaction.chain_id)?);
@@ -256,12 +260,20 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
         true,
         config.etherscan_key,
     );
+    let end_time = Instant::now();
+    let elapsed_time = end_time - start_time;
+    println!("Elapsed time gen forked: {:?}", elapsed_time);
 
     if evm.get_chain_id() != Uint::from(transaction.chain_id) {
         return Err(warp::reject::custom(IncorrectChainIdError()));
     }
 
     let response = run(&mut evm, transaction, false).await?;
+
+    let end_time2 = Instant::now();
+    let elapsed_time2 = end_time2 - end_time;
+    println!("Elapsed time run simulate: {:?}", elapsed_time2);
+
 
     Ok(warp::reply::json(&response))
 }
