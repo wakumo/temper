@@ -1,12 +1,16 @@
 FROM rust:1.69.0-slim-buster AS build
-
 WORKDIR /app
 COPY . .
 RUN cargo build --release
 
-FROM centos:8
 
-# Copy the binary from the build stage to the current directory in the new stage
-COPY --from=build /app/target/release/enso-temper /enso-temper
-EXPOSE 80
-CMD ["./enso-temper"]
+FROM debian:buster-slim
+
+RUN apt-get update && apt-get install -y \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app/target/release/enso-temper /usr/local/bin/enso-temper
+EXPOSE 8080
+
+CMD ["/usr/local/bin/enso-temper"]
