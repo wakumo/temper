@@ -235,7 +235,6 @@ impl Evm {
         call: CallRawRequest,
         gas_limit: u64,
     ) -> Result<CallRawResult, EvmError> {
-        self.executor.set_gas_limit(gas_limit.into());
         self.set_access_list(call.access_list);
         let res = self
             .executor
