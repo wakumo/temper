@@ -27,6 +27,8 @@ use super::config::Config;
 use super::evm::{CallRawRequest, Evm};
 use std::time::Instant;
 
+const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulationRequest {
@@ -221,7 +223,7 @@ async fn run(
         format_trace: transaction.format_trace.unwrap_or_default(),
     };
     let result = if commit {
-        let gas_limit = transaction.gas_limit.unwrap_or(30_000_000); // Default 30M gas
+        let gas_limit = transaction.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT);
         evm.call_raw_committing(call, gas_limit).await?
     } else {
         evm.call_raw(call).await?
@@ -257,7 +259,7 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
         None,
         fork_url,
         transaction.block_number,
-        transaction.gas_limit.unwrap_or(30_000_000), // Default 30M gas
+        transaction.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
         true,
         config.etherscan_key,
     );
@@ -293,7 +295,7 @@ pub async fn simulate_bundle(
         None,
         fork_url,
         first_block_number,
-        transactions[0].gas_limit.unwrap_or(30_000_000), // Default 30M gas
+        transactions[0].gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
         true,
         config.etherscan_key,
     );
@@ -340,7 +342,7 @@ pub async fn simulate_stateful_new(
         None,
         fork_url,
         stateful_simulation_request.block_number,
-        stateful_simulation_request.gas_limit.unwrap_or(30_000_000), // Default 30M gas
+        stateful_simulation_request.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
         true,
         config.etherscan_key,
     );
