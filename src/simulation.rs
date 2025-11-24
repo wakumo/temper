@@ -34,7 +34,7 @@ pub struct SimulationRequest {
     pub from: Address,
     pub to: Address,
     pub data: Option<Bytes>,
-    pub gas_limit: u64,
+    pub gas_limit: Option<u64>,
     pub value: Option<PermissiveUint>,
     pub access_list: Option<AccessList>,
     pub block_number: Option<u64>,
@@ -60,7 +60,7 @@ pub struct SimulationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct StatefulSimulationRequest {
     pub chain_id: u64,
-    pub gas_limit: u64,
+    pub gas_limit: Option<u64>,
     pub block_number: Option<u64>,
 }
 
@@ -202,15 +202,15 @@ async fn run(
     transaction: SimulationRequest,
     commit: bool,
 ) -> Result<SimulationResponse, Rejection> {
-    for (address, state_override) in transaction.state_overrides.into_iter().flatten() {
-        evm.override_account(
-            address,
-            state_override.balance.map(Uint::from),
-            state_override.nonce,
-            state_override.code,
-            state_override.state.map(StorageOverride::from),
-        )?;
-    }
+    // Auto override sender balance to ensure sufficient gas (since gas_price = 0, we just need enough for value transfer)
+    let sufficient_balance = Uint::MAX; // Maximum balance to avoid any balance checks
+    evm.override_account(
+        transaction.from,
+        Some(sufficient_balance),
+        None,
+        None,
+        None,
+    )?;
 
     let call = CallRawRequest {
         from: transaction.from,
@@ -221,7 +221,8 @@ async fn run(
         format_trace: transaction.format_trace.unwrap_or_default(),
     };
     let result = if commit {
-        evm.call_raw_committing(call, transaction.gas_limit).await?
+        let gas_limit = transaction.gas_limit.unwrap_or(30_000_000); // Default 30M gas
+        evm.call_raw_committing(call, gas_limit).await?
     } else {
         evm.call_raw(call).await?
     };
@@ -256,7 +257,7 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
         None,
         fork_url,
         transaction.block_number,
-        transaction.gas_limit,
+        transaction.gas_limit.unwrap_or(30_000_000), // Default 30M gas
         true,
         config.etherscan_key,
     );
@@ -292,7 +293,7 @@ pub async fn simulate_bundle(
         None,
         fork_url,
         first_block_number,
-        transactions[0].gas_limit,
+        transactions[0].gas_limit.unwrap_or(30_000_000), // Default 30M gas
         true,
         config.etherscan_key,
     );
@@ -339,7 +340,7 @@ pub async fn simulate_stateful_new(
         None,
         fork_url,
         stateful_simulation_request.block_number,
-        stateful_simulation_request.gas_limit,
+        stateful_simulation_request.gas_limit.unwrap_or(30_000_000), // Default 30M gas
         true,
         config.etherscan_key,
     );
