@@ -6,7 +6,7 @@ pipeline {
 
 
         SERVICE_GIT_REPO = "https://github.com/wakumo/temper.git"
-        SERVICE_GIT_BRANCH = "main"
+        SERVICE_GIT_BRANCH = "develop"
         //SERVICE_NAMESPACE = "wakumo"
         SERVICE_NAME = "temper"
         SERVICE_IMAGE_NAME = "${DOCKER_REGISTRY_URL}/${SERVICE_NAME}:${BUILD_NUMBER}"
@@ -20,6 +20,9 @@ pipeline {
 
     stages {
         stage('Checkout Service') {
+            when {
+                branch 'develop'
+            }
             steps {
                 git branch: "${SERVICE_GIT_BRANCH}", credentialsId: 'github-develop', url: "${SERVICE_GIT_REPO}"
             }
