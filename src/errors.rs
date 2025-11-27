@@ -50,6 +50,11 @@ pub struct EvmError(pub Report);
 
 impl Reject for EvmError {}
 
+#[derive(Debug)]
+pub struct InvalidGasPriceError(pub String);
+
+impl Reject for InvalidGasPriceError {}
+
 pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     let code;
     let message: String;
@@ -86,6 +91,9 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
             code = StatusCode::INTERNAL_SERVER_ERROR;
             message = "EVM_ERROR".to_string();
         }
+    } else if let Some(e) = err.find::<InvalidGasPriceError>() {
+        code = StatusCode::BAD_REQUEST;
+        message = format!("INVALID_GAS_PRICE: {}", e.0);
     } else if let Some(e) = err.find::<BodyDeserializeError>() {
         // This error happens if the body could not be deserialized correctly
         // We can use the cause to analyze the error and customize the error message

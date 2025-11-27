@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use evm::Evm;
 use serde::de::DeserializeOwned;
-use simulation::{SimulationRequest, StatefulSimulationRequest};
+use simulation::{SimulationRequest, StatefulSimulationRequest, direct_raw_trace};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -24,10 +24,11 @@ pub fn simulate_routes(
     state: Arc<SharedSimulationState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     simulate(config.clone())
-        .or(simulate_bundle(config.clone()))
+        // .or(simulate_bundle(config.clone()))
         .or(simulate_stateful_new(config, state.clone()))
         .or(simulate_stateful_end(state.clone()))
         .or(simulate_stateful(state))
+        .or(direct_raw_trace())
 }
 
 /// POST /simulate
@@ -40,15 +41,15 @@ pub fn simulate(config: Config) -> impl Filter<Extract = (impl Reply,), Error = 
 }
 
 /// POST /simulate-bundle
-pub fn simulate_bundle(
-    config: Config,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    warp::path!("simulate-bundle")
-        .and(warp::post())
-        .and(json_body())
-        .and(with_config(config))
-        .and_then(simulation::simulate_bundle)
-}
+// pub fn simulate_bundle(
+//     config: Config,
+// ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+//     warp::path!("simulate-bundle")
+//         .and(warp::post())
+//         .and(json_body())
+//         .and(with_config(config))
+//         .and_then(simulation::simulate_bundle)
+// }
 
 /// POST /simulate-stateful
 pub fn simulate_stateful_new(
