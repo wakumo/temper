@@ -162,6 +162,13 @@ fn construct_url(base_url: &str) -> Result<String, Rejection> {
 }
 
 fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
+    // Try to get base URL from environment variable first
+    if let Ok(base_url) = env::var("BASE_BLOCKCHAIN_NODE_URL") {
+        let url = format!("{}{}", base_url, chain_id);
+        return construct_url(&url);
+    }
+
+    // Fallback to hardcoded URLs if env var is not set
     let url = match chain_id {
         // Ethereum
         1 => "https://rpc.ankr.com/eth",
