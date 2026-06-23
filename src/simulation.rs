@@ -9,8 +9,8 @@ use alloy::primitives::{
     Address, Bytes, U256, B256, Log,
 };
 use alloy_eip2930::AccessList;
-use foundry_evm::traces::CallKind;
 use foundry_evm::revm::interpreter::InstructionResult;
+use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -42,6 +42,7 @@ pub struct SimulationRequest {
     pub block_number: Option<u64>,
     pub state_overrides: Option<HashMap<Address, StateOverride>>,
     pub format_trace: Option<bool>,
+    pub allow_insufficient_funds: Option<bool>,
     pub gas_price: Option<String>, // in gwei format
     // pub commit: Option<bool>,
 }
@@ -54,7 +55,6 @@ pub struct SimulationResponse {
     pub block_number: u64,
     pub success: bool,
     pub trace: Vec<CallTrace>,
-    pub formatted_trace: Option<String>,
     pub logs: Vec<Log>,
     pub exit_reason: InstructionResult,
     pub return_data: Bytes,
@@ -115,6 +115,25 @@ impl From<State> for StorageOverride {
                 .collect(),
             diff,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simulation_request_accepts_allow_insufficient_funds() {
+        let request: SimulationRequest = serde_json::from_value(serde_json::json!({
+            "chainId": 1,
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002",
+            "gasLimit": 21_000,
+            "allowInsufficientFunds": true
+        }))
+        .unwrap();
+
+        assert_eq!(request.allow_insufficient_funds, Some(true));
     }
 }
 
@@ -252,6 +271,7 @@ async fn run(
         data: transaction.data,
         access_list: transaction.access_list,
         format_trace: transaction.format_trace.unwrap_or_default(),
+        allow_insufficient_funds: transaction.allow_insufficient_funds.unwrap_or_default(),
         gas_limit: transaction.gas_limit,
         gas_price,
     };
@@ -272,7 +292,6 @@ async fn run(
         trace: result.call_traces,
         logs: result.logs,
         exit_reason: result.exit_reason,
-        formatted_trace: result.formatted_trace,
         return_data: alloy::primitives::Bytes::from(result.return_data.to_vec()),
         state_diff: result.state_diff,
     };

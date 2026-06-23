@@ -9,6 +9,7 @@ homepage = "https://github.com/EnsoFinance/temper"
 repository = "https://github.com/EnsoFinance/temper"
 
 [dependencies]
+anvil = "0.2"
 alloy = { version = "1.0.13", features = [
     "eips",
     "json-rpc",
@@ -31,7 +32,7 @@ log = "0.4.27"
 pretty_env_logger = "0.5.0"
 
 
-revm = { version = "23.1.0", default-features = false }
+revm = { version = "23.1.0", default-features = false, features = ["optional_balance_check"] }
 revm-primitives = { version = "19.0.0", default-features = false }
 reth-db = { git = "https://github.com/paradigmxyz/reth", package = "reth-db", rev = "55f4b0b" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider", rev = "55f4b0b" }
@@ -49,4 +50,4 @@ warp = { version = "0.4.2", features = ["server"] }
 sys-info = "0.9.1"
 foundry-fork-db = "0.14"
 alloy-evm = "0.7.2"
-revm-inspectors = { version = "0.29.2", features = ["std", "js-tracer", "anstyle", "serde"] }
+revm-inspectors = { version = "0.21.0", features = ["std", "js-tracer", "anstyle", "serde"] }
