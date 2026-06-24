@@ -65,6 +65,7 @@ pub struct CallRawRequest {
     pub access_list: Option<AccessList>,
     pub format_trace: bool,
     pub allow_insufficient_funds: bool,
+    pub include_state_diff: bool,
     pub gas_limit: u64,
     pub gas_price: u128,
 }
@@ -355,6 +356,14 @@ fn trace_rpc_url<'a>(fork_url: &'a str, use_anvil: bool, execution_rpc_url: &'a 
     }
 }
 
+fn trace_types(include_state_diff: bool) -> Vec<&'static str> {
+    if include_state_diff {
+        vec!["trace", "stateDiff"]
+    } else {
+        vec!["trace"]
+    }
+}
+
 pub struct Evm {
     // executor:  EthEvm<WrapDatabaseRef<SharedBackend>, NoOpInspector>,
     shared: SharedBackend,
@@ -472,7 +481,7 @@ impl Evm {
         let hex_block = format!("0x{:x}", self.block.header.number);
         let params = serde_json::json!([
             with_other,
-            ["trace", "stateDiff"],
+            trace_types(call.include_state_diff),
             hex_block
         ]);
 
@@ -678,6 +687,7 @@ mod tests {
             access_list: None,
             format_trace: false,
             allow_insufficient_funds: false,
+            include_state_diff: true,
             gas_limit: 21_000,
             gas_price: 1,
         };
@@ -751,6 +761,7 @@ mod tests {
             access_list: None,
             format_trace: false,
             allow_insufficient_funds: false,
+            include_state_diff: true,
             gas_limit: 21_000,
             gas_price: 1,
         };
@@ -779,6 +790,7 @@ mod tests {
             access_list: None,
             format_trace: false,
             allow_insufficient_funds: false,
+            include_state_diff: true,
             gas_limit: 21_000,
             gas_price: 1,
         };
@@ -816,6 +828,16 @@ mod tests {
         let anvil_url = "http://127.0.0.1:8545";
 
         assert_eq!(trace_rpc_url(fork_url, true, anvil_url), fork_url);
+    }
+
+    #[test]
+    fn trace_types_include_state_diff_by_default() {
+        assert_eq!(trace_types(true), vec!["trace", "stateDiff"]);
+    }
+
+    #[test]
+    fn trace_types_can_skip_state_diff() {
+        assert_eq!(trace_types(false), vec!["trace"]);
     }
 
     #[test]

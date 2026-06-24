@@ -43,6 +43,7 @@ pub struct SimulationRequest {
     pub state_overrides: Option<HashMap<Address, StateOverride>>,
     pub format_trace: Option<bool>,
     pub allow_insufficient_funds: Option<bool>,
+    pub include_state_diff: Option<bool>,
     pub gas_price: Option<String>, // in gwei format
     // pub commit: Option<bool>,
 }
@@ -134,6 +135,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(request.allow_insufficient_funds, Some(true));
+    }
+
+    #[test]
+    fn simulation_request_accepts_include_state_diff() {
+        let request: SimulationRequest = serde_json::from_value(serde_json::json!({
+            "chainId": 1,
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002",
+            "gasLimit": 21_000,
+            "includeStateDiff": false
+        }))
+        .unwrap();
+
+        assert_eq!(request.include_state_diff, Some(false));
     }
 }
 
@@ -272,6 +287,7 @@ async fn run(
         access_list: transaction.access_list,
         format_trace: transaction.format_trace.unwrap_or_default(),
         allow_insufficient_funds: transaction.allow_insufficient_funds.unwrap_or_default(),
+        include_state_diff: transaction.include_state_diff.unwrap_or(true),
         gas_limit: transaction.gas_limit,
         gas_price,
     };
