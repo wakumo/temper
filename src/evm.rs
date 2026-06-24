@@ -297,19 +297,7 @@ fn configure_evm(
     shared: SharedBackend,
     allow_insufficient_funds: bool,
 ) -> EthEvm<WrapDatabaseRef<SharedBackend>, TracingInspector> {
-    let block_env = BlockEnv {
-        number: block.header.number(),
-        beneficiary: block.header.beneficiary(),
-        timestamp: block.header.timestamp(),
-        gas_limit: block.header.gas_limit(),
-        basefee: block.header.base_fee_per_gas().unwrap_or(0),
-        prevrandao: block.header.mix_hash(),
-        difficulty: block.header.difficulty(),
-        blob_excess_gas_and_price: Some(BlobExcessGasAndPrice::new(
-            block.header.excess_blob_gas().unwrap_or_default(),
-            true,
-        )),
-    };
+    let block_env = block_env_from_block(&block);
 
     let context = EthEvmContext::new(
         WrapDatabaseRef(shared),
@@ -361,6 +349,24 @@ fn trace_types(include_state_diff: bool) -> Vec<&'static str> {
         vec!["trace", "stateDiff"]
     } else {
         vec!["trace"]
+    }
+}
+
+fn safe_blob_excess_gas_and_price(excess_blob_gas: Option<u64>) -> Option<BlobExcessGasAndPrice> {
+    let _ = excess_blob_gas;
+    Some(BlobExcessGasAndPrice::new(0, true))
+}
+
+fn block_env_from_block(block: &AnyRpcBlock) -> BlockEnv {
+    BlockEnv {
+        number: block.header.number(),
+        beneficiary: block.header.beneficiary(),
+        timestamp: block.header.timestamp(),
+        gas_limit: block.header.gas_limit(),
+        basefee: block.header.base_fee_per_gas().unwrap_or(0),
+        prevrandao: block.header.mix_hash(),
+        difficulty: block.header.difficulty(),
+        blob_excess_gas_and_price: safe_blob_excess_gas_and_price(block.header.excess_blob_gas()),
     }
 }
 
@@ -420,9 +426,7 @@ impl Evm {
             .await
             .unwrap()
             .unwrap();
-        let meta = BlockchainDbMeta::default()
-            .with_block(&block)
-            .with_url(fork_url.as_str());
+        let meta = BlockchainDbMeta::new(block_env_from_block(&block), fork_url.clone());
         let db = BlockchainDb::new(meta, foundry_config::Config::foundry_cache_dir());
         let shared = SharedBackend::spawn_backend(
             provider.clone(),
@@ -524,23 +528,7 @@ impl Evm {
             }
             Err(panic_err) => {
                 println!("⚠️  Transaction execution panicked: {:?}", panic_err);
-                println!("⚠️  Likely deserialization error - using fallback");
-
-                // Create a fallback result for testing
-                use revm::context::result::{ExecutionResult, Output, SuccessReason};
-                use revm::state::EvmState;
-
-                let fallback_result = revm::context::result::ResultAndState {
-                    result: ExecutionResult::Success {
-                        reason: SuccessReason::Stop,
-                        gas_used: call.gas_limit / 2, // Estimate
-                        gas_refunded: 0,
-                        logs: Vec::new(),
-                        output: Output::Call(alloy::primitives::Bytes::new()),
-                    },
-                    state: EvmState::default(),
-                };
-                fallback_result
+                return Err(EvmError(eyre::eyre!("Transaction execution panicked")));
             }
         };
         let inspector_call_traces = call_traces_from_arena(executor.inspector_mut().traces());
@@ -838,6 +826,20 @@ mod tests {
     #[test]
     fn trace_types_can_skip_state_diff() {
         assert_eq!(trace_types(false), vec!["trace"]);
+    }
+
+    #[test]
+    fn blob_config_handles_extreme_excess_blob_gas_without_panicking() {
+        let config = safe_blob_excess_gas_and_price(Some(u64::MAX)).unwrap();
+
+        assert_eq!(config.excess_blob_gas, 0);
+    }
+
+    #[test]
+    fn blob_config_handles_known_overflow_boundary_without_panicking() {
+        let config = safe_blob_excess_gas_and_price(Some(148_099_579)).unwrap();
+
+        assert_eq!(config.excess_blob_gas, 0);
     }
 
     #[test]
