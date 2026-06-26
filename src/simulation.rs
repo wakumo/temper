@@ -1,33 +1,31 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use std::str::FromStr;
 
 use std::sync::Arc;
 
-use dashmap::mapref::one::RefMut;
-use alloy::primitives::{
-    Address, Bytes, U256, B256, Log,
-};
+use alloy::primitives::{Address, Bytes, Log, B256, U256};
 use alloy_eip2930::AccessList;
+use dashmap::mapref::one::RefMut;
 use foundry_evm::revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::types::CallKind;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use warp::reply::Json;
-use warp::{Rejection, Reply, Filter};
+use warp::{Filter, Rejection, Reply};
 
 use crate::errors::{
-    IncorrectChainIdError, InvalidBlockNumbersError, MultipleChainIdsError, NoURLForChainIdError,
-    StateNotFound, InvalidGasPriceError,
+    IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError, MultipleChainIdsError,
+    NoURLForChainIdError, StateNotFound,
 };
 use crate::evm::StorageOverride;
 use crate::SharedSimulationState;
 
 use super::config::Config;
 use super::evm::{CallRawRequest, Evm};
-use std::time::Instant;
 use reqwest;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,7 +43,7 @@ pub struct SimulationRequest {
     pub allow_insufficient_funds: Option<bool>,
     pub include_state_diff: Option<bool>,
     pub gas_price: Option<String>, // in gwei format
-    // pub commit: Option<bool>,
+                                   // pub commit: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -109,13 +107,7 @@ impl From<State> for StorageOverride {
             State::Diff { state_diff } => (state_diff, true),
         };
 
-        StorageOverride {
-            slots: slots
-                .into_iter()
-                .map(|(key, value)| (key, value.into()))
-                .collect(),
-            diff,
-        }
+        StorageOverride { slots, diff }
     }
 }
 
@@ -177,13 +169,8 @@ impl<'de> Deserialize<'de> for PermissiveUint {
     where
         D: serde::Deserializer<'de>,
     {
-        // Accept value in hex or decimal formats
         let value = String::deserialize(deserializer)?;
-        let parsed = if value.starts_with("0x") {
-            U256::from_str(&value).map_err(serde::de::Error::custom)?
-        } else {
-            U256::from_str(&value).map_err(serde::de::Error::custom)?
-        };
+        let parsed = U256::from_str(&value).map_err(serde::de::Error::custom)?;
         Ok(Self(parsed))
     }
 }
@@ -261,18 +248,13 @@ async fn run(
     // ⏱️ GAS PRICE PARSING
     let gas_parse_start = Instant::now();
     let gas_price = match transaction.gas_price {
-        Some(gas_price_str) => {
-            match gas_price_str.parse::<f64>() {
-                Ok(gas_price_gwei) => {
-                    let gas_price_wei = (gas_price_gwei * 1_000_000_000.0) as u128;
-                    gas_price_wei
-                }
-                Err(e) => {
-                    log::error!("Invalid gas price format '{}': {}", gas_price_str, e);
-                    return Err(warp::reject::custom(InvalidGasPriceError(gas_price_str)));
-                }
+        Some(gas_price_str) => match gas_price_str.parse::<f64>() {
+            Ok(gas_price_gwei) => (gas_price_gwei * 1_000_000_000.0) as u128,
+            Err(e) => {
+                log::error!("Invalid gas price format '{}': {}", gas_price_str, e);
+                return Err(warp::reject::custom(InvalidGasPriceError(gas_price_str)));
             }
-        }
+        },
         None => 20_000_000_000u128, // Default: 20 Gwei
     };
     let gas_parse_time = gas_parse_start.elapsed();
@@ -335,7 +317,8 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
         transaction.block_number,
         transaction.gas_limit,
         config.etherscan_key,
-    ).await;
+    )
+    .await;
 
     if evm.get_chain_id() != U256::from(transaction.chain_id) {
         return Err(warp::reject::custom(IncorrectChainIdError()));
@@ -361,7 +344,8 @@ pub async fn simulate_bundle(
         first_block_number,
         transactions[0].gas_limit,
         config.etherscan_key,
-    ).await;
+    )
+    .await;
 
     if evm.get_chain_id() != U256::from(first_chain_id) {
         return Err(warp::reject::custom(IncorrectChainIdError()));
@@ -376,7 +360,8 @@ pub async fn simulate_bundle(
             let tx_block = transaction
                 .block_number
                 .expect("Transaction has no block number");
-            if transaction.block_number < first_block_number || tx_block < evm.get_block().try_into().unwrap_or(0)
+            if transaction.block_number < first_block_number
+                || tx_block < evm.get_block().try_into().unwrap_or(0)
             {
                 return Err(warp::reject::custom(InvalidBlockNumbersError()));
             }
@@ -406,7 +391,8 @@ pub async fn simulate_stateful_new(
         stateful_simulation_request.block_number,
         stateful_simulation_request.gas_limit,
         config.etherscan_key,
-    ).await;
+    )
+    .await;
     let new_id = Uuid::new_v4();
     state.evms.insert(new_id, Arc::new(Mutex::new(evm)));
 
@@ -457,18 +443,23 @@ pub async fn simulate_stateful(
             if tx_block_number != first_block_number.unwrap_or(0)
                 || tx_block_number != evm.get_block().try_into().unwrap_or(0)
             {
-                if Some(tx_block_number) < first_block_number || tx_block_number < evm.get_block().try_into().unwrap_or(0)
+                if Some(tx_block_number) < first_block_number
+                    || tx_block_number < evm.get_block().try_into().unwrap_or(0)
                 {
                     return Err(warp::reject::custom(InvalidBlockNumbersError()));
                 }
-                if let Err(_) = evm.set_block(tx_block_number).await {
+                if (evm.set_block(tx_block_number).await).is_err() {
                     log::error!("Failed to set block number to {}", tx_block_number);
-                    return Err(warp::reject::custom(crate::errors::EvmError(eyre::eyre!("Failed to set block number"))));
+                    return Err(warp::reject::custom(crate::errors::EvmError(eyre::eyre!(
+                        "Failed to set block number"
+                    ))));
                 }
                 let block_timestamp = evm.get_block_timestamp().try_into().unwrap_or(0);
-                if let Err(_) = evm.set_block_timestamp(block_timestamp + 12).await {
+                if (evm.set_block_timestamp(block_timestamp + 12).await).is_err() {
                     log::error!("Failed to set block timestamp");
-                    return Err(warp::reject::custom(crate::errors::EvmError(eyre::eyre!("Failed to set block timestamp"))));
+                    return Err(warp::reject::custom(crate::errors::EvmError(eyre::eyre!(
+                        "Failed to set block timestamp"
+                    ))));
                 }
             }
         }
@@ -516,10 +507,7 @@ impl DirectRpcClient {
         block_number: Option<&str>,
     ) -> Result<serde_json::Value, String> {
         // Create params array with optional block number
-        let mut params = vec![
-            transaction_request.clone(),
-            serde_json::json!(trace_types)
-        ];
+        let mut params = vec![transaction_request.clone(), serde_json::json!(trace_types)];
 
         // Add block number if provided
         if let Some(block) = block_number {
@@ -532,7 +520,6 @@ impl DirectRpcClient {
             "params": params,
             "id": 1
         });
-
 
         let response = self
             .client
@@ -549,9 +536,11 @@ impl DirectRpcClient {
             .await
             .map_err(|e| format!("Failed to read response: {}", e))?;
 
-
         if !status.is_success() {
-            return Err(format!("RPC call failed with status {}: {}", status, response_text));
+            return Err(format!(
+                "RPC call failed with status {}: {}",
+                status, response_text
+            ));
         }
 
         let json_response: serde_json::Value = serde_json::from_str(&response_text)
@@ -568,6 +557,12 @@ impl DirectRpcClient {
     }
 }
 
+impl Default for DirectRpcClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Warp filter for direct raw trace API
 pub fn direct_raw_trace() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::path("direct-raw-trace")
@@ -576,10 +571,7 @@ pub fn direct_raw_trace() -> impl Filter<Extract = impl Reply, Error = Rejection
         .and_then(handle_direct_raw_trace)
 }
 
-async fn handle_direct_raw_trace(
-    request: DirectRawTraceRequest,
-) -> Result<impl Reply, Rejection> {
-
+async fn handle_direct_raw_trace(request: DirectRawTraceRequest) -> Result<impl Reply, Rejection> {
     let client = DirectRpcClient::new();
 
     // Extract and convert block number from transaction request if not provided
@@ -590,10 +582,8 @@ async fn handle_direct_raw_trace(
         if let Some(block_decimal) = block_num.as_u64() {
             let hex_block = format!("0x{:x}", block_decimal);
             Some(hex_block)
-        } else if let Some(block_str) = block_num.as_str() {
-            Some(block_str.to_string())
         } else {
-            None
+            block_num.as_str().map(|block_str| block_str.to_string())
         }
     } else {
         None
@@ -602,7 +592,12 @@ async fn handle_direct_raw_trace(
     let block_number = hex_block.as_deref();
 
     match client
-        .trace_call(&request.rpc_url, &request.transaction_request, &request.trace_types, block_number)
+        .trace_call(
+            &request.rpc_url,
+            &request.transaction_request,
+            &request.trace_types,
+            block_number,
+        )
         .await
     {
         Ok(trace_data) => {

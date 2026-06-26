@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use evm::Evm;
 use serde::de::DeserializeOwned;
-use simulation::{SimulationRequest, StatefulSimulationRequest, direct_raw_trace};
+use simulation::{direct_raw_trace, SimulationRequest, StatefulSimulationRequest};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -40,7 +40,7 @@ pub fn simulate(config: Config) -> impl Filter<Extract = (impl Reply,), Error = 
         .and_then(simulation::simulate)
 }
 
-/// POST /simulate-bundle
+// POST /simulate-bundle
 // pub fn simulate_bundle(
 //     config: Config,
 // ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {

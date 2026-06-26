@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Instant;
 
-use alloy::providers::Identity;
-use alloy::providers::{
-    fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
+use alloy::providers::fillers::{
+    BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
+use alloy::providers::Identity;
 use alloy::rpc::types::trace::parity::TraceResults;
 use alloy::rpc::types::TransactionInputKind;
 use alloy::serde::WithOtherFields;
@@ -25,8 +25,6 @@ use alloy_eip2930::AccessList;
 use alloy_evm::{eth::EthEvmContext, EthEvm, Evm as AlloyEvm};
 use eyre::Result;
 use foundry_evm::traces::SparsedTraceArena;
-use revm_inspectors::tracing::{CallTraceArena, TracingInspector, TracingInspectorConfig};
-use revm_inspectors::tracing::types::{CallKind, CallTraceNode};
 use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::context::result::ExecutionResult;
 use revm::state::EvmState;
@@ -37,6 +35,8 @@ use revm::{
     handler::{instructions::EthInstructions, EthPrecompiles},
     DatabaseRef,
 };
+use revm_inspectors::tracing::types::{CallKind, CallTraceNode};
+use revm_inspectors::tracing::{CallTraceArena, TracingInspector, TracingInspectorConfig};
 // use revm::{db::CacheDB, DatabaseRef, Evm};
 // use revm_primitives::{BlobExcessGasAndPrice, BlockEnv, TxEnv};
 
@@ -99,7 +99,7 @@ impl From<CallTraceNode> for CallTrace {
             from: item.trace.caller,
             to: item.trace.address,
             value: format!("0x{:x}", item.trace.value), // ✅ Convert U256 to hex string
-            function_signature: function_signature,
+            function_signature,
         }
     }
 }
@@ -110,7 +110,7 @@ fn parse_alloy_traces(raw_trace: &serde_json::Value) -> Vec<CallTrace> {
 
     // Try to parse as raw trace_call response first (has "trace", "vmTrace", "stateDiff")
     if let Some(trace_array) = raw_trace.get("trace").and_then(|t| t.as_array()) {
-        for (_i, trace_entry) in trace_array.iter().enumerate() {
+        for trace_entry in trace_array.iter() {
             // Process each trace entry from raw JSON response
 
             if let Some(action) = trace_entry.get("action") {
@@ -177,7 +177,7 @@ fn parse_alloy_traces(raw_trace: &serde_json::Value) -> Vec<CallTrace> {
     }
     // Fallback: try to parse as TraceResults format (for fallback trace_call)
     else if let Ok(trace_results) = serde_json::from_value::<TraceResults>(raw_trace.clone()) {
-        for (_i, tx_trace) in trace_results.trace.iter().enumerate() {
+        for tx_trace in trace_results.trace.iter() {
             match &tx_trace.action {
                 alloy::rpc::types::trace::parity::Action::Call(call_action) => {
                     let call_kind = match call_action.call_type {
@@ -223,7 +223,6 @@ fn parse_alloy_traces(raw_trace: &serde_json::Value) -> Vec<CallTrace> {
                 _ => {}
             }
         }
-    } else {
     }
 
     traces
@@ -323,7 +322,7 @@ fn configure_balance_check(cfg: &mut CfgEnv, allow_insufficient_funds: bool) {
 }
 
 fn configure_tx_env(tx_req: TransactionRequest) -> TxEnv {
-    let tx_env = TxEnv {
+    TxEnv {
         caller: tx_req.from.unwrap(),
         kind: tx_req.kind().unwrap(),
         value: tx_req.value.unwrap(),
@@ -332,8 +331,7 @@ fn configure_tx_env(tx_req: TransactionRequest) -> TxEnv {
         nonce: tx_req.nonce.unwrap_or_default(),
         data: tx_req.input.data.unwrap_or_default(),
         ..Default::default()
-    };
-    tx_env
+    }
 }
 
 fn trace_rpc_url<'a>(fork_url: &'a str, use_anvil: bool, execution_rpc_url: &'a str) -> &'a str {
@@ -370,21 +368,23 @@ fn block_env_from_block(block: &AnyRpcBlock) -> BlockEnv {
     }
 }
 
+type TraceProvider = FillProvider<
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+    >,
+    alloy::providers::RootProvider<AnyNetwork>,
+    AnyNetwork,
+>;
+
 pub struct Evm {
     // executor:  EthEvm<WrapDatabaseRef<SharedBackend>, NoOpInspector>,
     shared: SharedBackend,
     block: AnyRpcBlock,
-    trace_provider: FillProvider<
-        JoinFill<
-            Identity,
-            JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
-        >,
-        alloy::providers::RootProvider<AnyNetwork>,
-        AnyNetwork,
-    >,
+    trace_provider: TraceProvider,
     _anvil: Option<AnvilInstance>,
-       // decoder: CallTraceDecoder,
-       // etherscan_identifier: Option<EtherscanIdentifier>,
+    // decoder: CallTraceDecoder,
+    // etherscan_identifier: Option<EtherscanIdentifier>,
 }
 
 impl Evm {
@@ -417,9 +417,11 @@ impl Evm {
                 .connect_http(fork_url.parse().unwrap());
             (provider, None, fork_url.clone())
         };
-        let trace_provider = ProviderBuilder::new()
-            .network::<AnyNetwork>()
-            .connect_http(trace_rpc_url(&fork_url, use_anvil, &execution_rpc_url).parse().unwrap());
+        let trace_provider = ProviderBuilder::new().network::<AnyNetwork>().connect_http(
+            trace_rpc_url(&fork_url, use_anvil, &execution_rpc_url)
+                .parse()
+                .unwrap(),
+        );
 
         let block = provider
             .get_block(BlockId::number(fork_block_number.unwrap()))
@@ -458,7 +460,10 @@ impl Evm {
                 0
             }
             Err(e) => {
-                println!("⚠️  Failed to get account {:?}: {}, using nonce 0", call.from, e);
+                println!(
+                    "⚠️  Failed to get account {:?}: {}, using nonce 0",
+                    call.from, e
+                );
                 0
             }
         };
@@ -483,11 +488,8 @@ impl Evm {
         // ⏱️ TRACE DATA RETRIEVAL (OPTIMIZED)
         let trace_start = Instant::now();
         let hex_block = format!("0x{:x}", self.block.header.number);
-        let params = serde_json::json!([
-            with_other,
-            trace_types(call.include_state_diff),
-            hex_block
-        ]);
+        let params =
+            serde_json::json!([with_other, trace_types(call.include_state_diff), hex_block]);
 
         let (trace_data, trace_error) = match self
             .trace_provider
@@ -503,13 +505,19 @@ impl Evm {
         // ⏱️ EVM EXECUTOR CONFIGURATION
         let evm_config_start = Instant::now();
         let mut executor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            configure_evm(self.block.clone(), self.shared.clone(), call.allow_insufficient_funds)
+            configure_evm(
+                self.block.clone(),
+                self.shared.clone(),
+                call.allow_insufficient_funds,
+            )
         })) {
             Ok(evm) => evm,
             Err(panic_err) => {
                 println!("⚠️  EVM configuration panicked: {:?}", panic_err);
                 println!("⚠️  This usually indicates a database/deserialization issue");
-                return Err(EvmError(eyre::eyre!("EVM configuration failed - database error")));
+                return Err(EvmError(eyre::eyre!(
+                    "EVM configuration failed - database error"
+                )));
             }
         };
         let evm_config_time = evm_config_start.elapsed();
@@ -522,8 +530,10 @@ impl Evm {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
                 println!("⚠️  Transaction execution failed: {}", e);
-                println!("⚠️  Transaction details: from={:?}, to={:?}, value={:?}",
-                    call.from, call.to, call.value);
+                println!(
+                    "⚠️  Transaction details: from={:?}, to={:?}, value={:?}",
+                    call.from, call.to, call.value
+                );
                 return Err(EvmError(eyre::eyre!("Failed to apply transaction: {}", e)));
             }
             Err(panic_err) => {
@@ -557,9 +567,15 @@ impl Evm {
         println!("  ├─ Nonce Lookup:     {:?}", nonce_time);
         println!("  ├─ TX Build:         {:?}", tx_build_time);
         if let Some(error) = trace_error {
-            println!("  ├─ Trace Retrieval:  {:?} ⚠️ FAILED ({})", trace_retrieval_time, error);
+            println!(
+                "  ├─ Trace Retrieval:  {:?} ⚠️ FAILED ({})",
+                trace_retrieval_time, error
+            );
         } else {
-            println!("  ├─ Trace Retrieval:  {:?} ⚠️ BOTTLENECK", trace_retrieval_time);
+            println!(
+                "  ├─ Trace Retrieval:  {:?} ⚠️ BOTTLENECK",
+                trace_retrieval_time
+            );
         }
         println!("  ├─ EVM Config:       {:?}", evm_config_time);
         println!("  ├─ TX Execution:     {:?} ⚠️ TARGET", execution_time);
@@ -569,12 +585,16 @@ impl Evm {
 
         // 🔥 Performance warnings
         if trace_retrieval_time.as_millis() > 100 {
-            println!("🔥 PERFORMANCE WARNING: Trace retrieval took {}ms (>100ms threshold)",
-                trace_retrieval_time.as_millis());
+            println!(
+                "🔥 PERFORMANCE WARNING: Trace retrieval took {}ms (>100ms threshold)",
+                trace_retrieval_time.as_millis()
+            );
         }
         if execution_time.as_millis() > 50 {
-            println!("⚡ OPTIMIZATION TARGET: TX execution took {}ms (>50ms threshold)",
-                execution_time.as_millis());
+            println!(
+                "⚡ OPTIMIZATION TARGET: TX execution took {}ms (>50ms threshold)",
+                execution_time.as_millis()
+            );
         }
 
         Ok(CallRawResult {
@@ -687,7 +707,10 @@ mod tests {
         assert_eq!(traces[0].from, from);
         assert_eq!(traces[0].to, to);
         assert_eq!(traces[0].value, "0x2a");
-        assert_eq!(traces[0].function_signature, AlloyBytes::from(vec![0x12, 0x34, 0x56, 0x78]));
+        assert_eq!(
+            traces[0].function_signature,
+            AlloyBytes::from(vec![0x12, 0x34, 0x56, 0x78])
+        );
     }
 
     #[test]
@@ -713,7 +736,10 @@ mod tests {
         assert_eq!(traces[0].from, from);
         assert_eq!(traces[0].to, to);
         assert_eq!(traces[0].value, "0x2a");
-        assert_eq!(traces[0].function_signature, AlloyBytes::from(vec![0x35, 0x93, 0x56, 0x4c]));
+        assert_eq!(
+            traces[0].function_signature,
+            AlloyBytes::from(vec![0x35, 0x93, 0x56, 0x4c])
+        );
     }
 
     #[test]

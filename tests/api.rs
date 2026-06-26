@@ -1,5 +1,6 @@
 use std::{fs::File, sync::Arc};
 
+use alloy::primitives::U256;
 use dashmap::DashMap;
 use enso_temper::{
     config::config,
@@ -11,7 +12,6 @@ use enso_temper::{
     },
     SharedSimulationState,
 };
-use alloy::primitives::U256;
 use warp::Filter;
 
 fn filter() -> impl Filter<Extract = (impl warp::Reply,), Error = std::convert::Infallible> + Clone
@@ -468,7 +468,10 @@ async fn post_simulate_invalid_from() {
 
     let body: ErrorMessage = serde_json::from_slice(res.body()).unwrap();
 
-    assert_eq!(body.message, "BAD REQUEST: odd number of digits at line 1 column 63".to_string());
+    assert_eq!(
+        body.message,
+        "BAD REQUEST: odd number of digits at line 1 column 63".to_string()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -496,7 +499,10 @@ async fn post_simulate_invalid_to() {
 
     let body: ErrorMessage = serde_json::from_slice(res.body()).unwrap();
 
-    assert_eq!(body.message, "BAD REQUEST: odd number of digits at line 1 column 113".to_string());
+    assert_eq!(
+        body.message,
+        "BAD REQUEST: odd number of digits at line 1 column 113".to_string()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
