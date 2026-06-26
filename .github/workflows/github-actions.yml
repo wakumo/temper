@@ -1,0 +1,58 @@
+name: test
+on:
+  push:
+    branches: [main]
+    tags: [v*]
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev libssl-dev pkg-config
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --locked
+
+  # docker:
+  #   runs-on: ubuntu-latest
+  #   needs: test
+  #   if: github.event_name == 'push'
+  #   permissions:
+  #     contents: read
+  #     packages: write
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+
+  #     - uses: docker/login-action@v2
+  #       with:
+  #         registry: ghcr.io
+  #         username: ${{ github.actor }}
+  #         password: ${{ secrets.GITHUB_TOKEN }}
+
+  #     - name: Metadata
+  #       id: metadata
+  #       uses: docker/metadata-action@v4
+  #       with:
+  #         images: ghcr.io/${{ github.repository }}
+  #         labels: |
+  #           org.opencontainers.image.licenses=MIT
+
+  #     - name: Build and push
+  #       uses: docker/build-push-action@v4
+  #       with:
+  #         push: true
+  #         tags: ${{ steps.metadata.outputs.tags }}
+  #         labels: ${{ steps.metadata.outputs.labels }}
