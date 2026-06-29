@@ -47,47 +47,15 @@ Notes:
 
 ### POST /api/v1/simulate-bundle
 
-Simulates a bundle of transactions in order against the same EVM.
+Currently unsupported. The `/simulate-bundle` route is disabled and is not registered by the server.
 
-[See the full request and response types below.](#types)
-
-Example body:
-
-```json
-[
-  {
-    "chainId": 1,
-    "from": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-    "to": "0x66fc62c1748e45435b06cf8dd105b73e9855f93e",
-    "data": "0xffa2ca3b44eea7c8e659973cbdf476546e9e6adfd1c580700537e52ba7124933a97904ea000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001d0e30db00300ffffffffffffc02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000186a0",
-    "gasLimit": 500000,
-    "value": "100000",
-    "blockNumber": 16784600
-  }
-]
-```
-
-Example response:
-
-```json
-[{
-  "gasUsed": 214622,
-  "blockNumber": 16784600,
-  "success": true,
-  "trace": { ... },
-  "logs": [ ... ],
-  "exitReason": "Return"
-}]
-```
-
-Notes:
-
-- `chainId` must be the same in all transactions.
-- `blockNumber` can be included and incremented when a multi-block simulation is required, or omitted in all transactions to use latest.
+Bundle simulation may be reintroduced later as a dedicated feature with explicit sequential state semantics.
 
 ### POST /api/v1/simulate-stateful
 
-Starts a new stateful simulation, allowing you to persist the state of a single EVM across multiple subsequent simulation requests.
+Starts a warm simulation session backed by a reusable fork/EVM context.
+
+This endpoint is intentionally warm-stateless: it reuses fork/session setup for performance, but simulated transaction effects are not committed between requests. Use it for repeated independent simulations against the same chain/block context, not for sequential flows where transaction N+1 must observe state changes from transaction N.
 
 [See the full request and response types below.](#types)
 
@@ -114,7 +82,9 @@ Example response:
 
 ### POST /api/v1/simulate-stateful/{statefulSimulationId}
 
-Simulates a bundle of transactions in order against the EVM referred to by the UUID in the URL. After the result is obtained, the EVM state will be retained for subsequent requests.
+Runs simulations against the warmed EVM session referred to by the UUID in the URL.
+
+Simulation results are returned to the caller, but transaction state changes are not committed back into the session. For example, an approval simulation followed by a swap simulation will not make the swap observe the approval unless that allowance already exists in the fork state or is provided through `stateOverrides`.
 
 [See the full request and response types below.](#types)
 
@@ -150,6 +120,7 @@ Notes:
 
 - `chainId` must be the same in all transactions.
 - `blockNumber` can be included and incremented when a multi-block simulation is required, or omitted in all transactions to use latest.
+- Transaction effects are not persisted between requests in this warm-stateless mode.
 
 
 ### DELETE /api/v1/simulate-stateful/{statefulSimulationId}
@@ -215,7 +186,7 @@ $ curl -H "Content-Type: application/json" --data @tests/body.json http://localh
 - [x] Support any RPC endpoint, not just Alchemy
 - [ ] Connect to local node via IPC
 - [ ] Connect to local [reth](https://github.com/paradigmxyz/reth/) DB
-- [ ] Support simulating a bundle of transactions against different blocks, applying state as the simulation progresses. Would help support https://github.com/paradigmxyz/reth/issues/2018
+- [ ] Reintroduce bundle simulation as a dedicated sequential feature if needed.
 - [ ] Support more authentication methods
 
 ### Contributing

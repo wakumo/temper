@@ -24,7 +24,9 @@ pub fn simulate_routes(
     state: Arc<SharedSimulationState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     simulate(config.clone())
-        .or(simulate_bundle(config.clone()))
+        // /simulate-bundle is intentionally not registered. Re-enable only with explicit
+        // sequential state semantics and docs/tests for that behavior.
+        // .or(simulate_bundle(config.clone()))
         .or(simulate_stateful_new(config, state.clone()))
         .or(simulate_stateful_end(state.clone()))
         .or(simulate_stateful(state))
@@ -39,16 +41,16 @@ pub fn simulate(config: Config) -> impl Filter<Extract = (impl Reply,), Error = 
         .and_then(simulation::simulate)
 }
 
-/// POST /simulate-bundle
-pub fn simulate_bundle(
-    config: Config,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    warp::path!("simulate-bundle")
-        .and(warp::post())
-        .and(json_body())
-        .and(with_config(config))
-        .and_then(simulation::simulate_bundle)
-}
+// POST /simulate-bundle intentionally disabled; see README.
+// pub fn simulate_bundle(
+//     config: Config,
+// ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+//     warp::path!("simulate-bundle")
+//         .and(warp::post())
+//         .and(json_body())
+//         .and(with_config(config))
+//         .and_then(simulation::simulate_bundle)
+// }
 
 /// POST /simulate-stateful
 pub fn simulate_stateful_new(
