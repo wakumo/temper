@@ -248,7 +248,7 @@ async fn post_simulate_state_overrides() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "simulate-bundle route is currently disabled"]
+#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
 async fn post_simulate_bundle_single_zerox_swap() {
     let filter = filter();
 
@@ -277,7 +277,21 @@ async fn post_simulate_bundle_single_zerox_swap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "simulate-bundle route is currently disabled"]
+async fn post_simulate_bundle_is_not_registered() {
+    let filter = filter();
+
+    let res = warp::test::request()
+        .method("POST")
+        .path("/simulate-bundle")
+        .json(&serde_json::json!([]))
+        .reply(&filter)
+        .await;
+
+    assert_eq!(res.status(), 404);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
 async fn post_simulate_bundle() {
     let filter = filter();
 
@@ -314,7 +328,7 @@ async fn post_simulate_bundle() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "simulate-bundle route is currently disabled"]
+#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
 async fn post_simulate_bundle_second_reverts() {
     let filter = filter();
 
@@ -537,7 +551,7 @@ async fn post_simulate_invalid_data() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "simulate-bundle route is currently disabled"]
+#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
 async fn post_simulate_bundle_multiple_block_numbers() {
     let filter = filter();
 
@@ -606,7 +620,7 @@ async fn post_simulate_bundle_multiple_block_numbers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "simulate-bundle route is currently disabled"]
+#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
 async fn post_simulate_bundle_multiple_block_numbers_invalid_order() {
     let filter = filter();
 

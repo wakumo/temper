@@ -224,10 +224,9 @@ fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
     construct_url(url)
 }
 
-async fn run(
+async fn run_warm_stateless(
     evm: &mut Evm,
     transaction: SimulationRequest,
-    _commit: bool,
 ) -> Result<SimulationResponse, Rejection> {
     let start_time = Instant::now();
 
@@ -323,7 +322,7 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
         return Err(warp::reject::custom(IncorrectChainIdError()));
     }
 
-    let response = run(&mut evm, transaction, false).await?;
+    let response = run_warm_stateless(&mut evm, transaction).await?;
 
     Ok(warp::reply::json(&response))
 }
@@ -332,6 +331,8 @@ pub async fn simulate_bundle(
     transactions: Vec<SimulationRequest>,
     config: Config,
 ) -> Result<Json, Rejection> {
+    // Legacy handler kept for reference while the route is disabled. Do not register without
+    // defining and testing explicit sequential state semantics.
     let first_chain_id = transactions[0].chain_id;
     let first_block_number = transactions[0].block_number;
 
@@ -371,7 +372,7 @@ pub async fn simulate_bundle(
                 .await
                 .expect("Failed to set block timestamp");
         }
-        response.push(run(&mut evm, transaction, true).await?);
+        response.push(run_warm_stateless(&mut evm, transaction).await?);
     }
 
     Ok(warp::reply::json(&response))
@@ -462,7 +463,7 @@ pub async fn simulate_stateful(
                 }
             }
         }
-        response.push(run(&mut evm, transaction, true).await?);
+        response.push(run_warm_stateless(&mut evm, transaction).await?);
     }
 
     Ok(warp::reply::json(&response))
