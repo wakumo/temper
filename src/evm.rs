@@ -27,11 +27,12 @@ use eyre::Result;
 use foundry_evm::traces::SparsedTraceArena;
 use foundry_fork_db::{cache::BlockchainDbMeta, BlockchainDb, SharedBackend};
 use revm::context::result::ExecutionResult;
+use revm::database::CacheDB;
+use revm::state::Bytecode;
 use revm::state::EvmState;
 use revm::{
     context::{BlockEnv, CfgEnv, Evm as RevmEvm, TxEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    database::WrapDatabaseRef,
     handler::{instructions::EthInstructions, EthPrecompiles},
     DatabaseRef,
 };
@@ -291,19 +292,90 @@ pub struct StorageOverride {
     pub diff: bool,
 }
 
-fn configure_evm(
-    block: AnyRpcBlock,
-    shared: SharedBackend,
-    allow_insufficient_funds: bool,
-) -> EthEvm<WrapDatabaseRef<SharedBackend>, TracingInspector> {
-    let block_env = block_env_from_block(&block);
+#[derive(Debug, Clone, Default)]
+struct AccountOverride {
+    balance: Option<U256>,
+    nonce: Option<u64>,
+    code: Option<AlloyBytes>,
+    storage: Option<StorageOverride>,
+}
 
-    let context = EthEvmContext::new(
-        WrapDatabaseRef(shared),
-        revm_primitives::hardfork::SpecId::PRAGUE,
-    )
-    .modify_cfg_chained(|cfg| configure_balance_check(cfg, allow_insufficient_funds))
-    .with_block(block_env);
+fn apply_account_override<DB: DatabaseRef>(
+    db: &mut CacheDB<DB>,
+    address: Address,
+    account_override: AccountOverride,
+) -> Result<(), DB::Error> {
+    let mut account = db.basic_ref(address)?.unwrap_or_default();
+
+    if let Some(balance) = account_override.balance {
+        account.balance = balance;
+    }
+
+    if let Some(nonce) = account_override.nonce {
+        account.nonce = nonce;
+    }
+
+    if let Some(code) = account_override.code {
+        account = account.with_code(Bytecode::new_raw(code));
+    }
+
+    db.insert_account_info(address, account);
+
+    if let Some(storage) = account_override.storage {
+        if storage.diff {
+            for (slot, value) in storage.slots {
+                db.insert_account_storage(address, slot.into(), value)?;
+            }
+        } else {
+            let slots = storage
+                .slots
+                .into_iter()
+                .map(|(slot, value)| (slot.into(), value))
+                .collect();
+            db.replace_account_storage(address, slots)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn build_override_db<DB: DatabaseRef>(
+    base: DB,
+    address: Address,
+    balance: Option<U256>,
+    nonce: Option<u64>,
+    code: Option<AlloyBytes>,
+    storage: Option<StorageOverride>,
+) -> Result<CacheDB<DB>, DB::Error> {
+    let mut db = CacheDB::new(base);
+    apply_account_override(
+        &mut db,
+        address,
+        AccountOverride {
+            balance,
+            nonce,
+            code,
+            storage,
+        },
+    )?;
+    Ok(db)
+}
+
+fn configure_evm_with_db<DB>(
+    block: AnyRpcBlock,
+    db: DB,
+    allow_insufficient_funds: bool,
+    timestamp_override: Option<u64>,
+) -> EthEvm<DB, TracingInspector>
+where
+    DB: revm::Database<Error: std::error::Error + Send + Sync + 'static>,
+{
+    let block_env = block_env_from_block(&block, timestamp_override);
+
+    let context = EthEvmContext::new(db, revm_primitives::hardfork::SpecId::PRAGUE)
+        .modify_cfg_chained(|cfg| configure_balance_check(cfg, allow_insufficient_funds))
+        .with_block(block_env);
 
     let evm = RevmEvm::new(
         context,
@@ -319,6 +391,30 @@ fn configure_evm(
 
 fn configure_balance_check(cfg: &mut CfgEnv, allow_insufficient_funds: bool) {
     cfg.disable_balance_check = allow_insufficient_funds;
+}
+
+fn chain_id_u256(chain_id: u64) -> U256 {
+    U256::from(chain_id)
+}
+
+fn block_number_value(number: u64) -> u64 {
+    number
+}
+
+fn block_number_u256(number: u64) -> U256 {
+    U256::from(block_number_value(number))
+}
+
+fn block_timestamp_value(header_timestamp: u64, timestamp_override: Option<u64>) -> u64 {
+    timestamp_override.unwrap_or(header_timestamp)
+}
+
+fn block_timestamp_u256(header_timestamp: u64, timestamp_override: Option<u64>) -> U256 {
+    U256::from(block_timestamp_value(header_timestamp, timestamp_override))
+}
+
+fn fork_block_id(block_number: Option<u64>) -> Option<BlockId> {
+    block_number.map(BlockId::number)
 }
 
 fn configure_tx_env(tx_req: TransactionRequest) -> TxEnv {
@@ -355,11 +451,11 @@ fn safe_blob_excess_gas_and_price(excess_blob_gas: Option<u64>) -> Option<BlobEx
     Some(BlobExcessGasAndPrice::new(0, true))
 }
 
-fn block_env_from_block(block: &AnyRpcBlock) -> BlockEnv {
+fn block_env_from_block(block: &AnyRpcBlock, timestamp_override: Option<u64>) -> BlockEnv {
     BlockEnv {
-        number: block.header.number(),
+        number: block_number_value(block.header.number()),
         beneficiary: block.header.beneficiary(),
-        timestamp: block.header.timestamp(),
+        timestamp: block_timestamp_value(block.header.timestamp(), timestamp_override),
         gas_limit: block.header.gas_limit(),
         basefee: block.header.base_fee_per_gas().unwrap_or(0),
         prevrandao: block.header.mix_hash(),
@@ -377,12 +473,18 @@ type TraceProvider = FillProvider<
     AnyNetwork,
 >;
 
+type EvmProvider = TraceProvider;
+
 pub struct Evm {
     // executor:  EthEvm<WrapDatabaseRef<SharedBackend>, NoOpInspector>,
+    provider: EvmProvider,
     shared: SharedBackend,
     block: AnyRpcBlock,
+    chain_id: u64,
     trace_provider: TraceProvider,
     _anvil: Option<AnvilInstance>,
+    account_overrides: HashMap<Address, AccountOverride>,
+    block_timestamp_override: Option<u64>,
     // decoder: CallTraceDecoder,
     // etherscan_identifier: Option<EtherscanIdentifier>,
 }
@@ -400,10 +502,11 @@ impl Evm {
         let (provider, anvil_instance, execution_rpc_url) = if use_anvil {
             println!("🚀 Using LOCAL ANVIL for {}x performance improvement", 142);
 
-            let anvil = Anvil::new()
-                .fork(&fork_url)
-                .fork_block_number(fork_block_number.unwrap_or(18_800_000))
-                .spawn();
+            let mut anvil = Anvil::new().fork(&fork_url);
+            if let Some(block_number) = fork_block_number {
+                anvil = anvil.fork_block_number(block_number);
+            }
+            let anvil = anvil.spawn();
 
             let provider = ProviderBuilder::new()
                 .network::<AnyNetwork>()
@@ -422,29 +525,31 @@ impl Evm {
                 .parse()
                 .unwrap(),
         );
+        let chain_id = provider.get_chain_id().await.unwrap();
 
         let block = provider
-            .get_block(BlockId::number(fork_block_number.unwrap()))
+            .get_block(fork_block_id(fork_block_number).unwrap_or_else(BlockId::latest))
             .await
             .unwrap()
             .unwrap();
-        let meta = BlockchainDbMeta::new(block_env_from_block(&block), fork_url.clone());
+        let meta = BlockchainDbMeta::new(block_env_from_block(&block, None), fork_url.clone());
         let db = BlockchainDb::new(meta, foundry_config::Config::foundry_cache_dir());
-        let shared = SharedBackend::spawn_backend(
-            provider.clone(),
-            db,
-            Some(BlockId::number(fork_block_number.unwrap())),
-        )
-        .await;
+        let shared =
+            SharedBackend::spawn_backend(provider.clone(), db, fork_block_id(fork_block_number))
+                .await;
         // let shared: SharedBackend = SharedBackend::spawn_backend(provider.clone(), db, Some(BlockId::Number(BlockNumberOrTag::Number(fork_block_number.unwrap())))).await;
         // let shared: SharedBackend = SharedBackend::spawn_backend(provider.clone(), db, Some(BlockId::number(fork_block_number.unwrap()))).await;
         // let evm: EthEvm<WrapDatabaseRef<SharedBackend>, NoOpInspector> = configure_evm(block.clone(), shared.clone());
         Evm {
             // executor: evm,
+            provider,
             shared,
             block,
+            chain_id,
             trace_provider,
             _anvil: anvil_instance,
+            account_overrides: HashMap::new(),
+            block_timestamp_override: None,
         }
     }
 
@@ -504,11 +609,17 @@ impl Evm {
 
         // ⏱️ EVM EXECUTOR CONFIGURATION
         let evm_config_start = Instant::now();
+        let mut override_db = CacheDB::new(self.shared.clone());
+        for (address, account_override) in std::mem::take(&mut self.account_overrides) {
+            apply_account_override(&mut override_db, address, account_override)
+                .map_err(|_| EvmError(eyre::eyre!("Failed to apply state override")))?;
+        }
         let mut executor = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            configure_evm(
+            configure_evm_with_db(
                 self.block.clone(),
-                self.shared.clone(),
+                override_db,
                 call.allow_insufficient_funds,
+                self.block_timestamp_override,
             )
         })) {
             Ok(evm) => evm,
@@ -599,7 +710,7 @@ impl Evm {
 
         Ok(CallRawResult {
             gas_used: res.result.gas_used(),
-            block_number: 123,
+            block_number: block_number_value(self.block.header.number()),
             success: res.result.is_success(),
             trace: None,
             call_traces,
@@ -614,61 +725,50 @@ impl Evm {
 
     pub fn override_account(
         &mut self,
-        _address: Address,
+        address: Address,
         balance: Option<U256>,
         nonce: Option<u64>,
         code: Option<AlloyBytes>,
         storage: Option<StorageOverride>,
     ) -> Result<(), OverrideError> {
-        // Try to override account via executor environment
-        if let Some(nonce_val) = nonce {
-            // Override the nonce in the EVM environment
-            // This is a simulation, so we can set any nonce we want
-            let mut executor = configure_evm(self.block.clone(), self.shared.clone(), false);
-            executor.ctx_mut().tx.nonce = nonce_val;
-        }
-
-        if let Some(_balance_val) = balance {
-            // TODO: Implement balance override when needed
-        }
-
-        if let Some(_code_val) = code {
-            // TODO: Implement code override when needed
-        }
-
-        if let Some(_storage_val) = storage {
-            // TODO: Implement storage override when needed
-        }
-
+        self.account_overrides.insert(
+            address,
+            AccountOverride {
+                balance,
+                nonce,
+                code,
+                storage,
+            },
+        );
         Ok(())
     }
 
-    pub async fn set_block(&mut self, _number: u64) -> Result<(), EvmError> {
-        // self.executor.env_mut().evm_env.block_env.number = U256::from(number).into();
+    pub async fn set_block(&mut self, number: u64) -> Result<(), EvmError> {
+        self.block = self
+            .provider
+            .get_block(BlockId::number(number))
+            .await
+            .map_err(|err| EvmError(eyre::eyre!("Failed to fetch block {}: {}", number, err)))?
+            .ok_or_else(|| EvmError(eyre::eyre!("Block {} not found", number)))?;
+        self.block_timestamp_override = None;
         Ok(())
     }
 
     pub fn get_block(&self) -> U256 {
-        U256::from(3)
-        // self.executor.env().evm_env.block_env.number.into()
+        block_number_u256(self.block.header.number())
     }
 
-    pub async fn set_block_timestamp(&mut self, _timestamp: u64) -> Result<(), EvmError> {
-        // self.executor.env_mut().evm_env.block_env.timestamp = U256::from(timestamp).into();
+    pub async fn set_block_timestamp(&mut self, timestamp: u64) -> Result<(), EvmError> {
+        self.block_timestamp_override = Some(timestamp);
         Ok(())
     }
 
     pub fn get_block_timestamp(&self) -> U256 {
-        U256::from(2)
-        // self.executor.env().evm_env.block_env.timestamp.into()
+        block_timestamp_u256(self.block.header.timestamp(), self.block_timestamp_override)
     }
 
     pub fn get_chain_id(&self) -> U256 {
-        // U256::from(1)
-        // U256::from(self.executor.env().evm_env.cfg_env.chain_id)
-        // U256::from(self.block.header.chain_id())
-        // U256::from(self.block.header.inner.)
-        U256::from(1)
+        chain_id_u256(self.chain_id)
     }
 
     #[allow(dead_code)]
@@ -682,6 +782,7 @@ impl Evm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use revm::Database;
 
     #[test]
     fn default_trace_uses_basic_trace_when_format_trace_disabled() {
@@ -786,6 +887,34 @@ mod tests {
     }
 
     #[test]
+    fn fork_block_id_uses_latest_when_block_number_is_omitted() {
+        assert_eq!(fork_block_id(None), None);
+    }
+
+    #[test]
+    fn block_number_value_preserves_actual_header_number() {
+        assert_eq!(block_number_value(16_927_538), 16_927_538);
+    }
+
+    #[test]
+    fn block_number_u256_preserves_actual_header_number() {
+        assert_eq!(block_number_u256(16_927_538), U256::from(16_927_538_u64));
+    }
+
+    #[test]
+    fn block_timestamp_value_prefers_override_when_present() {
+        assert_eq!(
+            block_timestamp_value(1_700_000_000, Some(1_700_000_012)),
+            1_700_000_012
+        );
+    }
+
+    #[test]
+    fn block_timestamp_value_uses_header_timestamp_without_override() {
+        assert_eq!(block_timestamp_value(1_700_000_000, None), 1_700_000_000);
+    }
+
+    #[test]
     fn choose_call_traces_falls_back_to_inspector_trace() {
         let from = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
         let to = Address::from_str("0x0000000000000000000000000000000000000002").unwrap();
@@ -884,5 +1013,38 @@ mod tests {
         configure_balance_check(&mut cfg, false);
 
         assert!(!cfg.disable_balance_check);
+    }
+
+    #[test]
+    fn chain_id_u256_preserves_non_mainnet_chain_id() {
+        assert_eq!(chain_id_u256(137), U256::from(137_u64));
+    }
+
+    #[test]
+    fn override_db_applies_account_and_storage_overrides() {
+        let address = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+        let slot = B256::from(U256::from(7_u64));
+        let value = U256::from(42_u64);
+        let code = AlloyBytes::from(vec![0x60, 0x00]);
+        let storage = StorageOverride {
+            slots: HashMap::from([(slot, value)]),
+            diff: true,
+        };
+        let mut db = build_override_db(
+            revm::database::EmptyDB::default(),
+            address,
+            Some(U256::from(100_u64)),
+            Some(9),
+            Some(code.clone()),
+            Some(storage),
+        )
+        .unwrap();
+
+        let account = db.basic(address).unwrap().unwrap();
+
+        assert_eq!(account.balance, U256::from(100_u64));
+        assert_eq!(account.nonce, 9);
+        assert_eq!(account.code.unwrap().original_byte_slice(), code.as_ref());
+        assert_eq!(db.storage(address, slot.into()).unwrap(), value);
     }
 }

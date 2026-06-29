@@ -22,5 +22,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy the binary from the build stage to the current directory in the new stage
 COPY --from=build /app/target/release/enso-temper /enso-temper
 COPY --from=build /usr/local/cargo/git/checkouts/foundry-87057ca846c16966/*/target/release/anvil /usr/local/bin/anvil
-EXPOSE 80
+EXPOSE 8080
 CMD ["./enso-temper"]

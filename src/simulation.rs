@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use warp::reply::Json;
-use warp::{Filter, Rejection, Reply};
+use warp::Rejection;
 
 use crate::errors::{
     IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError, MultipleChainIdsError,
@@ -24,7 +24,6 @@ use crate::SharedSimulationState;
 
 use super::config::Config;
 use super::evm::{CallRawRequest, Evm};
-use reqwest;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,156 +466,4 @@ pub async fn simulate_stateful(
     }
 
     Ok(warp::reply::json(&response))
-}
-
-// ===== RAW TRACE API (Direct JSON-RPC) =====
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DirectRawTraceRequest {
-    pub rpc_url: String,
-    pub transaction_request: serde_json::Value,
-    pub trace_types: Vec<String>, // ["trace", "vmTrace", "stateDiff"]
-    pub block_number: Option<String>, // Optional block number (hex format)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DirectRawTraceResponse {
-    pub success: bool,
-    pub trace_data: Option<serde_json::Value>,
-    pub error: Option<String>,
-    pub rpc_url: String,
-}
-
-// Direct JSON-RPC client for trace calls
-pub struct DirectRpcClient {
-    client: reqwest::Client,
-}
-
-impl DirectRpcClient {
-    pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
-    }
-
-    pub async fn trace_call(
-        &self,
-        rpc_url: &str,
-        transaction_request: &serde_json::Value,
-        trace_types: &[String],
-        block_number: Option<&str>,
-    ) -> Result<serde_json::Value, String> {
-        // Create params array with optional block number
-        let mut params = vec![transaction_request.clone(), serde_json::json!(trace_types)];
-
-        // Add block number if provided
-        if let Some(block) = block_number {
-            params.push(serde_json::json!(block));
-        }
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "trace_call",
-            "params": params,
-            "id": 1
-        });
-
-        let response = self
-            .client
-            .post(rpc_url)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        let status = response.status();
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read response: {}", e))?;
-
-        if !status.is_success() {
-            return Err(format!(
-                "RPC call failed with status {}: {}",
-                status, response_text
-            ));
-        }
-
-        let json_response: serde_json::Value = serde_json::from_str(&response_text)
-            .map_err(|e| format!("Failed to parse JSON response: {}", e))?;
-
-        if let Some(error) = json_response.get("error") {
-            return Err(format!("RPC error: {}", error));
-        }
-
-        json_response
-            .get("result")
-            .cloned()
-            .ok_or_else(|| "No result in RPC response".to_string())
-    }
-}
-
-impl Default for DirectRpcClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// Warp filter for direct raw trace API
-pub fn direct_raw_trace() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    warp::path("direct-raw-trace")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and_then(handle_direct_raw_trace)
-}
-
-async fn handle_direct_raw_trace(request: DirectRawTraceRequest) -> Result<impl Reply, Rejection> {
-    let client = DirectRpcClient::new();
-
-    // Extract and convert block number from transaction request if not provided
-    let hex_block: Option<String> = if let Some(block) = &request.block_number {
-        Some(block.clone())
-    } else if let Some(block_num) = request.transaction_request.get("blockNumber") {
-        // Convert decimal to hex if needed
-        if let Some(block_decimal) = block_num.as_u64() {
-            let hex_block = format!("0x{:x}", block_decimal);
-            Some(hex_block)
-        } else {
-            block_num.as_str().map(|block_str| block_str.to_string())
-        }
-    } else {
-        None
-    };
-
-    let block_number = hex_block.as_deref();
-
-    match client
-        .trace_call(
-            &request.rpc_url,
-            &request.transaction_request,
-            &request.trace_types,
-            block_number,
-        )
-        .await
-    {
-        Ok(trace_data) => {
-            let response = DirectRawTraceResponse {
-                success: true,
-                trace_data: Some(trace_data),
-                error: None,
-                rpc_url: request.rpc_url,
-            };
-            Ok(warp::reply::json(&response))
-        }
-        Err(error_msg) => {
-            let response = DirectRawTraceResponse {
-                success: false,
-                trace_data: None,
-                error: Some(error_msg),
-                rpc_url: request.rpc_url,
-            };
-            Ok(warp::reply::json(&response))
-        }
-    }
 }

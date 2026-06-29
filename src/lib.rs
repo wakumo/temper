@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use evm::Evm;
 use serde::de::DeserializeOwned;
-use simulation::{direct_raw_trace, SimulationRequest, StatefulSimulationRequest};
+use simulation::{SimulationRequest, StatefulSimulationRequest};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -28,7 +28,6 @@ pub fn simulate_routes(
         .or(simulate_stateful_new(config, state.clone()))
         .or(simulate_stateful_end(state.clone()))
         .or(simulate_stateful(state))
-        .or(direct_raw_trace())
 }
 
 /// POST /simulate
