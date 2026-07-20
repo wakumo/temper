@@ -2,7 +2,7 @@ pipeline {
     environment {
         DOCKER_REGISTRY_URL = "10.123.31.221:5000"
         KEEP_LAST_N_IMAGES = 3
-        // SLACK_NOTIFICATION_CHANNEL = "avacuscc-jenkins-notification-dev"
+        SLACK_NOTIFICATION_CHANNEL = "avacuscc-jenkins-notification-dev"
 
 
         SERVICE_GIT_REPO = "https://github.com/wakumo/temper.git"
