@@ -6,7 +6,7 @@ pipeline {
 
 
         SERVICE_GIT_REPO = "https://github.com/wakumo/temper.git"
-        SERVICE_GIT_BRANCH = "develop"
+        SERVICE_GIT_BRANCH = "main"
         //SERVICE_NAMESPACE = "wakumo"
         SERVICE_NAME = "temper"
         SERVICE_IMAGE_NAME = "${DOCKER_REGISTRY_URL}/${SERVICE_NAME}:${BUILD_NUMBER}"
@@ -21,7 +21,7 @@ pipeline {
     stages {
         stage('Checkout Service') {
             when {
-                branch 'develop'
+                branch 'main'
             }
             steps {
                 git branch: "${SERVICE_GIT_BRANCH}", credentialsId: 'github-develop', url: "${SERVICE_GIT_REPO}"
@@ -103,7 +103,7 @@ pipeline {
     post {
        // only triggered when blue or green sign
        success {
-           slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has completed the build image with commit `${GIT_COMMIT}` ,  View scan analysis results here: http://jenkins-server-dev.tail6c624.ts.net:9000/dashboard?id=${SERVICE_NAME}-develop", color: '#1ddb46'
+           slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has completed the build image with commit `${GIT_COMMIT}` .\n Image: `${SERVICE_IMAGE_NAME}`", color: '#1ddb46'
        }
        // triggered when red sign
        failure {
