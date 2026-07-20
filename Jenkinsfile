@@ -30,7 +30,7 @@ pipeline {
         stage('Build Service Image') {
             steps {
                 script {
-                    Image=docker.build("${SERVICE_IMAGE_NAME}")
+                    Image = docker.build("${SERVICE_IMAGE_NAME}", "--no-cache .")
                     // push image to registry
                     docker.withRegistry("http://${DOCKER_REGISTRY_URL}") {
                         Image.push()
@@ -100,15 +100,15 @@ pipeline {
             }
         }
     }
-    // post {
-    //    // only triggered when blue or green sign
-    //    success {
-    //        slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has completed the build image with commit `${GIT_COMMIT}` ,  View scan analysis results here: http://jenkins-server-dev.tail6c624.ts.net:9000/dashboard?id=${SERVICE_NAME}-develop", color: '#1ddb46'
-    //    }
-    //    // triggered when red sign
-    //    failure {
-    //        slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has built an image of failure with commit `${GIT_COMMIT}`. please try again!!!", color: '#FE2E2E'
-    //    }
-    // }
+    post {
+       // only triggered when blue or green sign
+       success {
+           slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has completed the build image with commit `${GIT_COMMIT}` ,  View scan analysis results here: http://jenkins-server-dev.tail6c624.ts.net:9000/dashboard?id=${SERVICE_NAME}-develop", color: '#1ddb46'
+       }
+       // triggered when red sign
+       failure {
+           slackSend channel: "${SLACK_NOTIFICATION_CHANNEL}", message: "`${SERVICE_NAME}` has built an image of failure with commit `${GIT_COMMIT}`. please try again!!!", color: '#FE2E2E'
+       }
+    }
 
 }
