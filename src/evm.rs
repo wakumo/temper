@@ -453,6 +453,10 @@ fn trace_types(include_state_diff: bool) -> Vec<&'static str> {
     }
 }
 
+fn should_fetch_rpc_trace(include_state_diff: bool) -> bool {
+    include_state_diff
+}
+
 fn safe_blob_excess_gas_and_price(excess_blob_gas: Option<u64>) -> Option<BlobExcessGasAndPrice> {
     let _ = excess_blob_gas;
     Some(BlobExcessGasAndPrice::new(0, true))
@@ -601,23 +605,28 @@ impl Evm {
                 self.block.header.base_fee_per_gas().unwrap_or_default(),
             ))
             .with_gas_limit(call.gas_limit);
-        let with_other: WithOtherFields<TransactionRequest> = tx_req.clone().into();
         let tx_build_time = tx_build_start.elapsed();
 
         // ⏱️ TRACE DATA RETRIEVAL (OPTIMIZED)
         let trace_start = Instant::now();
-        let hex_block = format!("0x{:x}", self.block.header.number);
-        let params =
-            serde_json::json!([with_other, trace_types(call.include_state_diff), hex_block]);
 
-        let (trace_data, trace_error) = match self
-            .trace_provider
-            .client()
-            .request::<_, serde_json::Value>("trace_call", params)
-            .await
-        {
-            Ok(result) => (Some(result), None),
-            Err(e) => (None, Some(e.to_string())),
+        let (trace_data, trace_error) = if should_fetch_rpc_trace(call.include_state_diff) {
+            let with_other: WithOtherFields<TransactionRequest> = tx_req.clone().into();
+            let hex_block = format!("0x{:x}", self.block.header.number);
+            let params =
+                serde_json::json!([with_other, trace_types(call.include_state_diff), hex_block]);
+
+            match self
+                .trace_provider
+                .client()
+                .request::<_, serde_json::Value>("trace_call", params)
+                .await
+            {
+                Ok(result) => (Some(result), None),
+                Err(e) => (None, Some(e.to_string())),
+            }
+        } else {
+            (None, None)
         };
         let trace_retrieval_time = trace_start.elapsed();
 
@@ -996,6 +1005,11 @@ mod tests {
     #[test]
     fn trace_types_can_skip_state_diff() {
         assert_eq!(trace_types(false), vec!["trace"]);
+    }
+
+    #[test]
+    fn rpc_trace_is_skipped_without_state_diff() {
+        assert!(!should_fetch_rpc_trace(false));
     }
 
     #[test]
