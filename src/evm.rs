@@ -365,6 +365,7 @@ fn build_override_db<DB: DatabaseRef>(
 fn configure_evm_with_db<DB>(
     block: AnyRpcBlock,
     db: DB,
+    chain_id: u64,
     allow_insufficient_funds: bool,
     timestamp_override: Option<u64>,
 ) -> EthEvm<DB, TracingInspector>
@@ -374,6 +375,7 @@ where
     let block_env = block_env_from_block(&block, timestamp_override);
 
     let context = EthEvmContext::new(db, revm_primitives::hardfork::SpecId::PRAGUE)
+        .modify_cfg_chained(|cfg| configure_chain_id(cfg, chain_id))
         .modify_cfg_chained(|cfg| configure_balance_check(cfg, allow_insufficient_funds))
         .with_block(block_env);
 
@@ -391,6 +393,10 @@ where
 
 fn configure_balance_check(cfg: &mut CfgEnv, allow_insufficient_funds: bool) {
     cfg.disable_balance_check = allow_insufficient_funds;
+}
+
+fn configure_chain_id(cfg: &mut CfgEnv, chain_id: u64) {
+    cfg.chain_id = chain_id;
 }
 
 fn chain_id_u256(chain_id: u64) -> U256 {
@@ -417,7 +423,7 @@ fn fork_block_id(block_number: Option<u64>) -> Option<BlockId> {
     block_number.map(BlockId::number)
 }
 
-fn configure_tx_env(tx_req: TransactionRequest) -> TxEnv {
+fn configure_tx_env(tx_req: TransactionRequest, chain_id: u64) -> TxEnv {
     TxEnv {
         caller: tx_req.from.unwrap(),
         kind: tx_req.kind().unwrap(),
@@ -426,6 +432,7 @@ fn configure_tx_env(tx_req: TransactionRequest) -> TxEnv {
         gas_limit: tx_req.gas.unwrap_or_default(),
         nonce: tx_req.nonce.unwrap_or_default(),
         data: tx_req.input.data.unwrap_or_default(),
+        chain_id: Some(chain_id),
         ..Default::default()
     }
 }
@@ -449,6 +456,10 @@ fn trace_types(include_state_diff: bool) -> Vec<&'static str> {
 fn safe_blob_excess_gas_and_price(excess_blob_gas: Option<u64>) -> Option<BlobExcessGasAndPrice> {
     let _ = excess_blob_gas;
     Some(BlobExcessGasAndPrice::new(0, true))
+}
+
+fn effective_gas_price(requested: u128, basefee: u64) -> u128 {
+    requested.max(basefee as u128)
 }
 
 fn block_env_from_block(block: &AnyRpcBlock, timestamp_override: Option<u64>) -> BlockEnv {
@@ -585,7 +596,10 @@ impl Evm {
                 TransactionInputKind::from_str("data").unwrap(),
             )
             .with_nonce(current_nonce)
-            .with_gas_price(call.gas_price)
+            .with_gas_price(effective_gas_price(
+                call.gas_price,
+                self.block.header.base_fee_per_gas().unwrap_or_default(),
+            ))
             .with_gas_limit(call.gas_limit);
         let with_other: WithOtherFields<TransactionRequest> = tx_req.clone().into();
         let tx_build_time = tx_build_start.elapsed();
@@ -618,6 +632,7 @@ impl Evm {
             configure_evm_with_db(
                 self.block.clone(),
                 override_db,
+                self.chain_id,
                 call.allow_insufficient_funds,
                 self.block_timestamp_override,
             )
@@ -636,7 +651,7 @@ impl Evm {
         // ⏱️ TRANSACTION EXECUTION
         let execution_start = Instant::now();
         let res = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            executor.transact(configure_tx_env(tx_req.clone()))
+            executor.transact(configure_tx_env(tx_req.clone(), self.chain_id))
         })) {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
@@ -998,6 +1013,11 @@ mod tests {
     }
 
     #[test]
+    fn effective_gas_price_uses_basefee_when_request_is_lower() {
+        assert_eq!(effective_gas_price(1, 2), 2);
+    }
+
+    #[test]
     fn configure_balance_check_disables_balance_validation_when_allowed() {
         let mut cfg = CfgEnv::default();
 
@@ -1018,6 +1038,27 @@ mod tests {
     #[test]
     fn chain_id_u256_preserves_non_mainnet_chain_id() {
         assert_eq!(chain_id_u256(137), U256::from(137_u64));
+    }
+
+    #[test]
+    fn configure_chain_id_sets_non_mainnet_chain_id() {
+        let mut cfg = CfgEnv::default();
+
+        configure_chain_id(&mut cfg, 137);
+
+        assert_eq!(cfg.chain_id, 137);
+    }
+
+    #[test]
+    fn configure_tx_env_sets_chain_id() {
+        let tx = TransactionRequest::default()
+            .with_from(Address::ZERO)
+            .with_to(Address::ZERO)
+            .with_value(U256::ZERO);
+
+        let env = configure_tx_env(tx, 137);
+
+        assert_eq!(env.chain_id, Some(137));
     }
 
     #[test]
