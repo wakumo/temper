@@ -31,7 +31,8 @@ impl std::fmt::Display for QuickNodeError {
 impl std::error::Error for QuickNodeError {}
 
 pub fn quicknode_url(chain_id: u64) -> Result<String, QuickNodeSkip> {
-    let base_url = env::var("BASE_BLOCKCHAIN_NODE_URL").map_err(|_| QuickNodeSkip::MissingConfig)?;
+    let base_url =
+        env::var("BASE_BLOCKCHAIN_NODE_URL").map_err(|_| QuickNodeSkip::MissingConfig)?;
     Ok(format!(
         "{}/{}?provider=quicknode",
         base_url.trim_end_matches('/'),
@@ -278,12 +279,10 @@ pub async fn simulate_with_quicknode(
         Err(err) => return Err(QuickNodeError(format!("quicknode config error: {err:?}"))),
     };
 
-    let provider = ProviderBuilder::new()
-        .network::<AnyNetwork>()
-        .connect_http(
-            url.parse()
-                .map_err(|err| QuickNodeError(format!("invalid QuickNode URL: {err}")))?,
-        );
+    let provider = ProviderBuilder::new().network::<AnyNetwork>().connect_http(
+        url.parse()
+            .map_err(|err| QuickNodeError(format!("invalid QuickNode URL: {err}")))?,
+    );
 
     let block_number = quicknode_block_number(&provider, transaction.block_number).await?;
     let body = debug_trace_call_body(transaction);
@@ -328,7 +327,10 @@ mod tests {
     #[test]
     fn quicknode_url_uses_shared_base_with_provider_query() {
         temp_env::with_vars(
-            [("BASE_BLOCKCHAIN_NODE_URL", Some("https://nodes.example.com/"))],
+            [(
+                "BASE_BLOCKCHAIN_NODE_URL",
+                Some("https://nodes.example.com/"),
+            )],
             || {
                 let url = quicknode_url(56).unwrap();
                 assert_eq!(url, "https://nodes.example.com/56?provider=quicknode");
@@ -339,10 +341,19 @@ mod tests {
     #[test]
     fn quicknode_url_supports_any_chain_id() {
         temp_env::with_vars(
-            [("BASE_BLOCKCHAIN_NODE_URL", Some("https://nodes.example.com"))],
+            [(
+                "BASE_BLOCKCHAIN_NODE_URL",
+                Some("https://nodes.example.com"),
+            )],
             || {
-                assert_eq!(quicknode_url(1).unwrap(), "https://nodes.example.com/1?provider=quicknode");
-                assert_eq!(quicknode_url(8453).unwrap(), "https://nodes.example.com/8453?provider=quicknode");
+                assert_eq!(
+                    quicknode_url(1).unwrap(),
+                    "https://nodes.example.com/1?provider=quicknode"
+                );
+                assert_eq!(
+                    quicknode_url(8453).unwrap(),
+                    "https://nodes.example.com/8453?provider=quicknode"
+                );
             },
         );
     }
@@ -481,7 +492,10 @@ mod tests {
 
         let response = format_quicknode_result(&request(56), 111_247_671, result).unwrap();
 
-        assert_eq!(response.trace[0].function_signature, Bytes::from(vec![0, 0, 0, 0]));
+        assert_eq!(
+            response.trace[0].function_signature,
+            Bytes::from(vec![0, 0, 0, 0])
+        );
     }
 
     #[test]

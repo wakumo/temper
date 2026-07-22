@@ -146,10 +146,14 @@ mod tests {
 
     #[test]
     fn chain_id_to_fork_url_uses_required_shared_base_env() {
-        temp_env::with_var("BASE_BLOCKCHAIN_NODE_URL", Some("https://nodes.example.com/"), || {
-            let url = chain_id_to_fork_url(56).unwrap();
-            assert_eq!(url, "https://nodes.example.com/56");
-        });
+        temp_env::with_var(
+            "BASE_BLOCKCHAIN_NODE_URL",
+            Some("https://nodes.example.com/"),
+            || {
+                let url = chain_id_to_fork_url(56).unwrap();
+                assert_eq!(url, "https://nodes.example.com/56");
+            },
+        );
     }
 
     #[test]
@@ -169,7 +173,10 @@ mod tests {
                 api_key: None,
             };
 
-            assert_eq!(fork_url_for(&config, 56).unwrap(), "https://custom.example.com");
+            assert_eq!(
+                fork_url_for(&config, 56).unwrap(),
+                "https://custom.example.com"
+            );
         });
     }
 }
