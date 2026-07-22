@@ -970,6 +970,7 @@ mod tests {
     #[test]
     fn simulation_response_serialization_omits_formatted_trace() {
         let response = crate::simulation::SimulationResponse {
+            request_id: None,
             simulation_id: 1,
             gas_used: 21_000,
             block_number: 123,

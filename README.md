@@ -44,6 +44,7 @@ Example response:
 Notes:
 
 - `blockNumber` can be omitted and the latest block will be used, however providing a `blockNumber` is recommended where possible to use the cache.
+- Simulation requests may include `request_id`; responses echo the same value, or `null` when omitted.
 
 ### POST /api/v1/simulate-bundle
 
@@ -92,6 +93,7 @@ Notes:
 - The request body must contain at least one transaction.
 - All transactions must use the same `chainId`.
 - For local fallback, block numbers must be non-decreasing.
+- Each transaction may include `request_id`; its response echoes the same value, or `null` when omitted.
 
 ### POST /api/v1/simulate-stateful
 
@@ -127,6 +129,8 @@ Example response:
 Runs simulations against the warmed EVM session referred to by the UUID in the URL.
 
 Simulation results are returned to the caller, but transaction state changes are not committed back into the session. For example, an approval simulation followed by a swap simulation will not make the swap observe the approval unless that allowance already exists in the fork state or is provided through `stateOverrides`.
+
+Each transaction may include `request_id`; its response echoes the same value, or `null` when omitted. The session creation endpoint does not use `request_id`.
 
 [See the full request and response types below.](#types)
 
@@ -239,6 +243,7 @@ $ curl -H "Content-Type: application/json" --data @tests/body.json http://localh
 
 ```typescript
 export type SimulationRequest = {
+  request_id?: string;
   chainId: number;
   from: string;
   to: string;
@@ -265,6 +270,7 @@ export type StateOverride = {
 };
 
 export type SimulationResponse = {
+  request_id: string | null;
   simulationId: string;
   gasUsed: number;
   blockNumber: number;

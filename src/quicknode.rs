@@ -201,6 +201,7 @@ pub fn format_quicknode_result(
     let success = result.get("error").is_none() && result.get("revertReason").is_none();
 
     Ok(SimulationResponse {
+        request_id: _transaction.request_id.clone(),
         simulation_id: 1,
         gas_used: parse_hex_u64(result.get("gasUsed").and_then(Value::as_str))?,
         block_number,
@@ -308,6 +309,7 @@ mod tests {
 
     fn request(chain_id: u64) -> SimulationRequest {
         SimulationRequest {
+            request_id: None,
             chain_id,
             from: Address::from_str("0x0000000000000000000000000000000000000001").unwrap(),
             to: Address::from_str("0x0000000000000000000000000000000000000002").unwrap(),
@@ -496,6 +498,24 @@ mod tests {
             response.trace[0].function_signature,
             Bytes::from(vec![0, 0, 0, 0])
         );
+    }
+
+    #[test]
+    fn quicknode_result_echoes_request_id() {
+        let mut req = request(56);
+        req.request_id = Some("request-a".to_string());
+        let result = serde_json::json!({
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002",
+            "type": "CALL",
+            "input": "0x12345678",
+            "gasUsed": "0x5208",
+            "output": "0x"
+        });
+
+        let response = format_quicknode_result(&req, 111_247_671, result).unwrap();
+
+        assert_eq!(response.request_id.as_deref(), Some("request-a"));
     }
 
     #[test]

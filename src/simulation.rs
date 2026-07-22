@@ -32,6 +32,8 @@ const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulationRequest {
+    #[serde(rename = "request_id")]
+    pub request_id: Option<String>,
     pub chain_id: u64,
     pub from: Address,
     pub to: Address,
@@ -50,6 +52,8 @@ pub struct SimulationRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulationResponse {
+    #[serde(rename = "request_id")]
+    pub request_id: Option<String>,
     pub simulation_id: u64,
     pub gas_used: u64,
     pub block_number: u64,
@@ -142,6 +146,58 @@ mod tests {
         .unwrap();
 
         assert_eq!(request.include_state_diff, Some(false));
+    }
+
+    #[test]
+    fn simulation_request_accepts_request_id() {
+        let request: SimulationRequest = serde_json::from_value(serde_json::json!({
+            "request_id": "request-a",
+            "chainId": 1,
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002",
+            "gasLimit": 21_000
+        }))
+        .unwrap();
+
+        assert_eq!(request.request_id.as_deref(), Some("request-a"));
+    }
+
+    #[test]
+    fn simulation_response_serializes_request_id() {
+        let response = SimulationResponse {
+            request_id: Some("request-a".to_string()),
+            simulation_id: 1,
+            gas_used: 0,
+            block_number: 1,
+            success: true,
+            trace: Vec::new(),
+            logs: Vec::new(),
+            exit_reason: InstructionResult::Return,
+            return_data: Bytes::new(),
+            state_diff: None,
+        };
+
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["request_id"], "request-a");
+    }
+
+    #[test]
+    fn simulation_response_serializes_missing_request_id_as_null() {
+        let response = SimulationResponse {
+            request_id: None,
+            simulation_id: 1,
+            gas_used: 0,
+            block_number: 1,
+            success: true,
+            trace: Vec::new(),
+            logs: Vec::new(),
+            exit_reason: InstructionResult::Return,
+            return_data: Bytes::new(),
+            state_diff: None,
+        };
+
+        let json = serde_json::to_value(response).unwrap();
+        assert!(json["request_id"].is_null());
     }
 
     #[test]
@@ -295,6 +351,7 @@ async fn run_warm_stateless(
     // ⏱️ RESPONSE BUILD
     let response_start = Instant::now();
     let response = SimulationResponse {
+        request_id: transaction.request_id.clone(),
         simulation_id: 1,
         gas_used: result.gas_used,
         block_number: result.block_number,
