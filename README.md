@@ -47,9 +47,51 @@ Notes:
 
 ### POST /api/v1/simulate-bundle
 
-Currently unsupported. The `/simulate-bundle` route is disabled and is not registered by the server.
+Simulates a bundle of transactions.
 
-Bundle simulation may be reintroduced later as a dedicated feature with explicit sequential state semantics.
+The server first attempts to simulate every transaction through QuickNode. If any
+transaction cannot be handled by QuickNode, the whole bundle falls back to the
+local workflow and runs sequentially on the same fork, so later transactions can
+observe state changes from earlier transactions.
+
+[See the full request and response types below.](#types)
+
+Example body:
+
+```json
+[
+  {
+    "chainId": 1,
+    "from": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    "to": "0x66fc62c1748e45435b06cf8dd105b73e9855f93e",
+    "data": "0xffa2ca3b44eea7c8e659973cbdf476546e9e6adfd1c580700537e52ba7124933a97904ea000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001d0e30db00300ffffffffffffc02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000186a0",
+    "gasLimit": 500000,
+    "value": "100000",
+    "blockNumber": 16784600
+  }
+]
+```
+
+Example response:
+
+```json
+[
+  {
+    "gasUsed": 214622,
+    "blockNumber": 16784600,
+    "success": true,
+    "trace": [ ... ],
+    "logs": [ ... ],
+    "exitReason": "Return"
+  }
+]
+```
+
+Notes:
+
+- The request body must contain at least one transaction.
+- All transactions must use the same `chainId`.
+- For local fallback, block numbers must be non-decreasing.
 
 ### POST /api/v1/simulate-stateful
 

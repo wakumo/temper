@@ -16,8 +16,8 @@ use warp::reply::Json;
 use warp::Rejection;
 
 use crate::errors::{
-    IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError, MultipleChainIdsError,
-    NoURLForChainIdError, StateNotFound,
+    EmptyBundleError, IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError,
+    MultipleChainIdsError, NoURLForChainIdError, StateNotFound,
 };
 use crate::evm::StorageOverride;
 use crate::quicknode::simulate_with_quicknode;
@@ -346,8 +346,10 @@ pub async fn simulate_bundle(
     transactions: Vec<SimulationRequest>,
     config: Config,
 ) -> Result<Json, Rejection> {
-    // Legacy handler kept for reference while the route is disabled. Do not register without
-    // defining and testing explicit sequential state semantics.
+    if transactions.is_empty() {
+        return Err(warp::reject::custom(EmptyBundleError()));
+    }
+
     let first_chain_id = transactions[0].chain_id;
     let first_block_number = transactions[0].block_number;
 

@@ -36,6 +36,11 @@ pub struct InvalidBlockNumbersError();
 impl Reject for InvalidBlockNumbersError {}
 
 #[derive(Debug)]
+pub struct EmptyBundleError();
+
+impl Reject for EmptyBundleError {}
+
+#[derive(Debug)]
 pub struct StateNotFound();
 
 impl Reject for StateNotFound {}
@@ -80,6 +85,9 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
     } else if let Some(_e) = err.find::<InvalidBlockNumbersError>() {
         code = StatusCode::BAD_REQUEST;
         message = "INVALID_BLOCK_NUMBERS".to_string();
+    } else if let Some(_e) = err.find::<EmptyBundleError>() {
+        code = StatusCode::BAD_REQUEST;
+        message = "EMPTY_BUNDLE".to_string();
     } else if let Some(_e) = err.find::<OverrideError>() {
         code = StatusCode::INTERNAL_SERVER_ERROR;
         message = "OVERRIDE_ERROR".to_string();

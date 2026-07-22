@@ -248,7 +248,7 @@ async fn post_simulate_state_overrides() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
+#[ignore = "depends on live fork RPC"]
 async fn post_simulate_bundle_single_zerox_swap() {
     let filter = filter();
 
@@ -277,7 +277,7 @@ async fn post_simulate_bundle_single_zerox_swap() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn post_simulate_bundle_is_not_registered() {
+async fn post_simulate_bundle_empty_body_is_bad_request() {
     let filter = filter();
 
     let res = warp::test::request()
@@ -287,11 +287,14 @@ async fn post_simulate_bundle_is_not_registered() {
         .reply(&filter)
         .await;
 
-    assert_eq!(res.status(), 404);
+    assert_eq!(res.status(), 400);
+
+    let body: ErrorMessage = serde_json::from_slice(res.body()).unwrap();
+    assert_eq!(body.message, "EMPTY_BUNDLE".to_string());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
+#[ignore = "depends on live fork RPC"]
 async fn post_simulate_bundle() {
     let filter = filter();
 
@@ -328,7 +331,7 @@ async fn post_simulate_bundle() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
+#[ignore = "depends on live fork RPC"]
 async fn post_simulate_bundle_second_reverts() {
     let filter = filter();
 
@@ -551,7 +554,7 @@ async fn post_simulate_invalid_data() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
+#[ignore = "depends on live fork RPC"]
 async fn post_simulate_bundle_multiple_block_numbers() {
     let filter = filter();
 
@@ -620,7 +623,7 @@ async fn post_simulate_bundle_multiple_block_numbers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "legacy simulate-bundle behavior test; route is currently disabled"]
+#[ignore = "depends on live fork RPC"]
 async fn post_simulate_bundle_multiple_block_numbers_invalid_order() {
     let filter = filter();
 
