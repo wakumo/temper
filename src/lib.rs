@@ -12,6 +12,7 @@ use config::Config;
 
 pub mod errors;
 pub mod evm;
+pub mod quicknode;
 
 pub mod simulation;
 

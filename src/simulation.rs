@@ -20,6 +20,7 @@ use crate::errors::{
     NoURLForChainIdError, StateNotFound,
 };
 use crate::evm::StorageOverride;
+use crate::quicknode::simulate_with_quicknode;
 use crate::SharedSimulationState;
 
 use super::config::Config;
@@ -142,6 +143,35 @@ mod tests {
 
         assert_eq!(request.include_state_diff, Some(false));
     }
+
+    #[test]
+    fn chain_id_to_fork_url_uses_required_shared_base_env() {
+        temp_env::with_var("BASE_BLOCKCHAIN_NODE_URL", Some("https://nodes.example.com/"), || {
+            let url = chain_id_to_fork_url(56).unwrap();
+            assert_eq!(url, "https://nodes.example.com/56");
+        });
+    }
+
+    #[test]
+    fn chain_id_to_fork_url_requires_shared_base_env() {
+        temp_env::with_var("BASE_BLOCKCHAIN_NODE_URL", None::<&str>, || {
+            assert!(chain_id_to_fork_url(56).is_err());
+        });
+    }
+
+    #[test]
+    fn fork_url_for_uses_config_fork_url_without_shared_base_env() {
+        temp_env::with_var("BASE_BLOCKCHAIN_NODE_URL", None::<&str>, || {
+            let config = Config {
+                port: 8080,
+                fork_url: Some("https://custom.example.com".to_string()),
+                etherscan_key: None,
+                api_key: None,
+            };
+
+            assert_eq!(fork_url_for(&config, 56).unwrap(), "https://custom.example.com");
+        });
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,47 +219,16 @@ fn construct_url(base_url: &str) -> Result<String, Rejection> {
 }
 
 fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
-    // Try to get base URL from environment variable first
-    if let Ok(base_url) = env::var("BASE_BLOCKCHAIN_NODE_URL") {
-        let url = format!("{}{}", base_url, chain_id);
-        return construct_url(&url);
+    let base_url = env::var("BASE_BLOCKCHAIN_NODE_URL")
+        .map_err(|_| warp::reject::custom(NoURLForChainIdError))?;
+    construct_url(&format!("{}/{}", base_url.trim_end_matches('/'), chain_id))
+}
+
+fn fork_url_for(config: &Config, chain_id: u64) -> Result<String, Rejection> {
+    match &config.fork_url {
+        Some(fork_url) => Ok(fork_url.clone()),
+        None => chain_id_to_fork_url(chain_id),
     }
-
-    // Fallback to hardcoded URLs if env var is not set
-    let url = match chain_id {
-        // Ethereum
-        1 => "https://rpc.ankr.com/eth",
-        // 1 => "https://eth.llamarpc.com",
-        5 => "https://rpc.ankr.com/eth_goerli",
-        11155111 => "https://sepolia.gateway.tenderly.co",
-        // Polygon
-        137 => "https://rpc.ankr.com/polygon",
-        // 137 => "https://polygon-rpc.com",
-        80001 => "https://rpc.ankr.com/polygon_mumbai",
-        // Polygon zkEVM
-        1101 => "https://rpc.ankr.com/polygon_zkevm",
-        1442 => "https://rpc.ankr.com/polygon_zkevm_testnet",
-        // Avalanche
-        43114 => "https://api.avax.network/ext/bc/C/rpc",
-        43113 => "https://api.avax-test.network/ext/bc/C/rpc",
-        // Fantom
-        250 => "https://rpcapi.fantom.network/",
-        4002 => "https://rpc.testnet.fantom.network/",
-        // xDai
-        100 => "https://rpc.xdaichain.com/",
-        // BSC
-        56 => "https://rpc.ankr.com/bsc",
-        97 => "https://rpc.ankr.com/bsc_testnet_chapel",
-        // Arbitrum
-        42161 => "https://arb1.arbitrum.io/rpc",
-        421613 => "https://goerli-rollup.arbitrum.io/rpc",
-        // Optimism
-        10 => "https://mainnet.optimism.io",
-        420 => "https://rpc.ankr.com/optimism_sepolia",
-        _ => return Err(NoURLForChainIdError.into()),
-    };
-
-    construct_url(url)
 }
 
 async fn run_warm_stateless(
@@ -315,9 +314,17 @@ async fn run_warm_stateless(
 }
 
 pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<Json, Rejection> {
-    let fork_url = config
-        .fork_url
-        .unwrap_or(chain_id_to_fork_url(transaction.chain_id)?);
+    match simulate_with_quicknode(&transaction).await {
+        Ok(Some(response)) => return Ok(warp::reply::json(&response)),
+        Ok(None) => {}
+        Err(err) => log::warn!(
+            target: "ts::api",
+            "simulate handled by local workflow: QuickNode simulate failed: {}",
+            err
+        ),
+    }
+
+    let fork_url = fork_url_for(&config, transaction.chain_id)?;
     let mut evm = Evm::new(
         fork_url,
         transaction.block_number,
@@ -344,9 +351,36 @@ pub async fn simulate_bundle(
     let first_chain_id = transactions[0].chain_id;
     let first_block_number = transactions[0].block_number;
 
-    let fork_url = config
-        .fork_url
-        .unwrap_or(chain_id_to_fork_url(first_chain_id)?);
+    let mut quicknode_responses = Vec::with_capacity(transactions.len());
+    let mut quicknode_failed = false;
+    for transaction in &transactions {
+        if transaction.chain_id != first_chain_id {
+            return Err(warp::reject::custom(MultipleChainIdsError()));
+        }
+
+        match simulate_with_quicknode(transaction).await {
+            Ok(Some(response)) => quicknode_responses.push(response),
+            Ok(None) => {
+                quicknode_failed = true;
+                break;
+            }
+            Err(err) => {
+                log::warn!(
+                    target: "ts::api",
+                    "simulate bundle handled by local workflow: QuickNode simulate failed: {}",
+                    err
+                );
+                quicknode_failed = true;
+                break;
+            }
+        }
+    }
+
+    if !quicknode_failed && quicknode_responses.len() == transactions.len() {
+        return Ok(warp::reply::json(&quicknode_responses));
+    }
+
+    let fork_url = fork_url_for(&config, first_chain_id)?;
     let mut evm = Evm::new(
         fork_url,
         first_block_number,
@@ -391,9 +425,7 @@ pub async fn simulate_stateful_new(
     config: Config,
     state: Arc<SharedSimulationState>,
 ) -> Result<Json, Rejection> {
-    let fork_url = config
-        .fork_url
-        .unwrap_or(chain_id_to_fork_url(stateful_simulation_request.chain_id)?);
+    let fork_url = fork_url_for(&config, stateful_simulation_request.chain_id)?;
     let evm = Evm::new(
         fork_url,
         stateful_simulation_request.block_number,
