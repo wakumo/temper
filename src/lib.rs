@@ -7,9 +7,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use warp::{Filter, Rejection, Reply};
 
-pub mod config;
-pub mod bundle_v2;
 mod bundle_call_tracer;
+pub mod bundle_v2;
+pub mod config;
 pub mod vm_trace;
 use config::Config;
 
