@@ -65,6 +65,12 @@ pub struct SimulationResponse {
     pub state_diff: Option<serde_json::Value>, // State changes from trace
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AppVersionResponse {
+    pub version: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatefulSimulationRequest {
@@ -404,6 +410,10 @@ pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<
     let response = run_warm_stateless(&mut evm, transaction).await?;
 
     Ok(warp::reply::json(&response))
+}
+
+pub async fn app_version() -> Result<Json, Rejection> {
+    Ok(warp::reply::json(&AppVersionResponse { version: 2 }))
 }
 
 pub async fn simulate_bundle(

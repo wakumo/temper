@@ -350,3 +350,80 @@ export enum InstructionResult {
 
  - Leverages a lot of crates from [Foundry](https://github.com/foundry-rs/foundry)
  - Inspired by [gakonst's example pyrevm](https://github.com/gakonst/pyrevm)
+
+### POST /api/v1/simulate_bundle_v2
+
+Simulates an **ordered sequence with shared state** using QuickNode `trace_callMany`.
+The body is an array of 1–20 `SimulationRequest` objects. Repeated senders are
+allowed. Every call must use the same `chainId`; explicit `blockNumber` values
+must agree. If any call specifies a block it is used for the whole sequence;
+otherwise the server resolves `eth_blockNumber` once before simulation.
+
+```json
+[
+  {
+    "request_id": "approval",
+    "chainId": 1,
+    "from": "0x5EB168ef0481801CF87887DF0FcA1cbAC88a744b",
+    "to": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "data": "0x095ea7b3000000000000000000000000610b463d2f57d2e0d9e785a7ff423fbae36f06240000000000000000000000000000000000000000000000000000000005f5e100",
+    "gasLimit": 1000000,
+    "value": "0"
+  },
+  {
+    "request_id": "transfer",
+    "chainId": 1,
+    "from": "0x610b463D2f57d2e0D9E785A7ff423FbAe36f0624",
+    "to": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "data": "0x23b872dd0000000000000000000000005eb168ef0481801cf87887df0fca1cbac88a744b000000000000000000000000610b463d2f57d2e0d9e785a7ff423fbae36f06240000000000000000000000000000000000000000000000000000000000989680",
+    "gasLimit": 1000000,
+    "value": "0"
+  }
+]
+```
+
+Returns `SimulationResponse[]` in input order, with `simulationId` starting at 1
+and `request_id` echoed unchanged. `logs` are reconstructed from VM opcode traces
+and have the standard `{address, topics, data}` shape. `trace` contains committed
+execution frames suitable for native movement analysis; failed subtrees are
+excluded and delegatecall/callcode values are zeroed because those frames do not
+transfer native currency. Raw `vmTrace` is not returned.
+
+If provider trace decoding fails (observed with inconsistent BSC Testnet VM
+nesting), the server replays the entire ordered bundle once through
+`debug_traceCallMany` with `callTracer` and `withLog: true`, at the same pinned
+block and end-of-block state (`transactionIndex: -1`). Replay calls must match
+all original Parity frames, inputs, values, success flags and outputs before
+committed logs are accepted. The original trace, stateDiff and gas accounting
+remain authoritative. Providers without this RPC or inconsistent replay results
+return 502. Recovery currently verifies call frames; create/suicide recovery is
+conservatively rejected. This can add one RPC round trip only on decode failure
+and shares the existing overall 45-second deadline.
+
+The calls are distinct simulated transactions: state from each successful call is
+visible to the next, while a reverted call's execution effects are rolled back.
+A failure is reported per call; it does not make earlier transactions atomic with
+later ones. The provider continues the sequence using its transaction semantics.
+Inspect each `success` before interpreting results.
+
+This endpoint requires `BASE_BLOCKCHAIN_NODE_URL`; it uses
+`{BASE_BLOCKCHAIN_NODE_URL}/{chainId}?provider=quicknode`. Provider errors return
+502, absent configuration returns 503, and the overall RPC/decode deadline is
+45 seconds (504). There is **no fallback to independent simulation or local
+warm-stateless EVM**. Existing `/simulate` and `/simulate-bundle` remain unchanged.
+
+Limits: 2 MiB request, 32 MiB provider response, 30 million gas per call (also the
+omitted default), and 100 million total gas. Set explicit gas limits for larger
+batches. State overrides and `allowInsufficientFunds: true` are rejected on this
+endpoint. `includeStateDiff: true` requests provider state differences per call;
+omitting it avoids that extra output. `gasPrice`, when supplied, uses decimal
+gwei with at most 9 fractional digits. Chain support depends on the configured
+QuickNode endpoint exposing `trace_callMany` and `vmTrace`.
+
+Each result additionally includes `error` (the provider's root execution error,
+otherwise `null`) and `gasAccounting: "execution_plus_intrinsic"`. `exitReason`
+distinguishes known EVM failures such as `OutOfGas`, `InvalidFEOpcode`, and
+`Revert`; unfamiliar execution errors use `FatalExternalError` with the original
+`error` retained. Compatibility field `gasUsed` excludes refunds and transaction
+gas-floor adjustments because `trace_callMany` does not expose charged total gas.
+It must not be used as an exact transaction fee or universal upper bound.

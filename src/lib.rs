@@ -8,6 +8,9 @@ use uuid::Uuid;
 use warp::{Filter, Rejection, Reply};
 
 pub mod config;
+pub mod bundle_v2;
+mod bundle_call_tracer;
+pub mod vm_trace;
 use config::Config;
 
 pub mod errors;
@@ -24,11 +27,20 @@ pub fn simulate_routes(
     config: Config,
     state: Arc<SharedSimulationState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    simulate(config.clone())
+    app_version()
+        .or(bundle_v2::route())
+        .or(simulate(config.clone()))
         .or(simulate_bundle(config.clone()))
         .or(simulate_stateful_new(config, state.clone()))
         .or(simulate_stateful_end(state.clone()))
         .or(simulate_stateful(state))
+}
+
+/// GET /version
+pub fn app_version() -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    warp::path!("version")
+        .and(warp::get())
+        .and_then(simulation::app_version)
 }
 
 /// POST /simulate

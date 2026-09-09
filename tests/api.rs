@@ -7,7 +7,7 @@ use enso_temper::{
     errors::{handle_rejection, ErrorMessage},
     simulate_routes,
     simulation::{
-        SimulationRequest, SimulationResponse, StatefulSimulationEndResponse,
+        AppVersionResponse, SimulationRequest, SimulationResponse, StatefulSimulationEndResponse,
         StatefulSimulationResponse,
     },
     SharedSimulationState,
@@ -23,6 +23,22 @@ fn filter() -> impl Filter<Extract = (impl warp::Reply,), Error = std::convert::
     warp::any()
         .and(simulate_routes(config(), shared_state))
         .recover(handle_rejection)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_version_returns_hardcoded_app_version() {
+    let filter = filter();
+
+    let res = warp::test::request()
+        .method("GET")
+        .path("/version")
+        .reply(&filter)
+        .await;
+
+    assert_eq!(res.status(), 200);
+
+    let body: AppVersionResponse = serde_json::from_slice(res.body()).unwrap();
+    assert_eq!(body.version, 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]
