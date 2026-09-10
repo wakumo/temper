@@ -351,7 +351,11 @@ export enum InstructionResult {
  - Leverages a lot of crates from [Foundry](https://github.com/foundry-rs/foundry)
  - Inspired by [gakonst's example pyrevm](https://github.com/gakonst/pyrevm)
 
-### POST /api/v1/simulate_bundle_v2
+### POST /api/v2/simulate_bundle
+
+This replaces `/api/v1/simulate_bundle_v2`; clients must use the V2 URL.
+The request and response formats are unchanged. Both API versions use the same
+`X-API-KEY` protection when configured.
 
 Simulates an **ordered sequence with shared state** using QuickNode `trace_callMany`.
 The body is an array of 1–20 `SimulationRequest` objects. Repeated senders are
@@ -427,3 +431,9 @@ distinguishes known EVM failures such as `OutOfGas`, `InvalidFEOpcode`, and
 `error` retained. Compatibility field `gasUsed` excludes refunds and transaction
 gas-floor adjustments because `trace_callMany` does not expose charged total gas.
 It must not be used as an exact transaction fee or universal upper bound.
+
+API routing is split into `src/api/v1.rs` for the existing V1 endpoints and
+`src/api/v2/` for shared-state bundle simulation and its trace decoders.
+`src/api/mod.rs` applies the common `/api` prefix and API-key filter before
+selecting a version. Shared simulation request/response types remain in
+`src/simulation.rs`.

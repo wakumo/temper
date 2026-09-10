@@ -32,7 +32,7 @@ fn rejection(status: u16, message: impl Into<String>) -> Rejection {
 }
 
 pub fn route() -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
-    warp::path!("simulate_bundle_v2")
+    warp::path!("simulate_bundle")
         .and(warp::post())
         .and(warp::body::content_length_limit(2 * 1024 * 1024))
         .and(warp::body::json::<Vec<SimulationRequest>>())
@@ -321,10 +321,12 @@ mod tests {
 mod normalization_tests {
     use super::*;
     fn fixtures() -> (Vec<SimulationRequest>, Vec<Value>) {
-        let calls = serde_json::from_str(include_str!("../tests/fixtures/bundle_v2_requests.json"))
-            .unwrap();
+        let calls = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/bundle_v2_requests.json"
+        ))
+        .unwrap();
         let response: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/vm_trace_usdt_response.json"
+            "../../../tests/fixtures/vm_trace_usdt_response.json"
         ))
         .unwrap();
         (calls, response["result"].as_array().unwrap().clone())
@@ -608,7 +610,7 @@ fn format_result_with_logs(
     }
     let raw_logs = match recovered_logs {
         Some(logs) => logs.clone(),
-        None => crate::vm_trace::extract_logs(&result["vmTrace"], traces)?,
+        None => super::vm_trace::extract_logs(&result["vmTrace"], traces)?,
     };
     let logs = raw_logs
         .iter()
@@ -659,18 +661,19 @@ mod api_tests {
         let api = route().recover(crate::errors::handle_rejection);
         let res = warp::test::request()
             .method("POST")
-            .path("/simulate_bundle_v2")
+            .path("/simulate_bundle")
             .json(&json!([]))
             .reply(&api)
             .await;
         assert_eq!(res.status(), 400);
-        let mut calls: Value =
-            serde_json::from_str(include_str!("../tests/fixtures/bundle_v2_requests.json"))
-                .unwrap();
+        let mut calls: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/bundle_v2_requests.json"
+        ))
+        .unwrap();
         calls[2]["chainId"] = json!(56);
         let res = warp::test::request()
             .method("POST")
-            .path("/simulate_bundle_v2")
+            .path("/simulate_bundle")
             .json(&calls)
             .reply(&api)
             .await;
@@ -681,7 +684,7 @@ mod api_tests {
         let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
         let seen = observed.clone();
         let fixture: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/vm_trace_usdt_response.json"
+            "../../../tests/fixtures/vm_trace_usdt_response.json"
         ))
         .unwrap();
         let rpc_route = warp::post()
@@ -706,15 +709,16 @@ mod api_tests {
         temp_env::async_with_vars(
             [("BASE_BLOCKCHAIN_NODE_URL", Some(format!("http://{addr}")))],
             async {
-                let mut calls: Value =
-                    serde_json::from_str(include_str!("../tests/fixtures/bundle_v2_requests.json"))
-                        .unwrap();
+                let mut calls: Value = serde_json::from_str(include_str!(
+                    "../../../tests/fixtures/bundle_v2_requests.json"
+                ))
+                .unwrap();
                 for c in calls.as_array_mut().unwrap() {
                     c.as_object_mut().unwrap().remove("blockNumber");
                 }
                 let res = warp::test::request()
                     .method("POST")
-                    .path("/simulate_bundle_v2")
+                    .path("/simulate_bundle")
                     .json(&calls)
                     .reply(&route().recover(crate::errors::handle_rejection))
                     .await;
@@ -823,19 +827,19 @@ mod bsc97_recovery_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn recovers_corrupt_vm_trace_by_replaying_the_whole_pinned_bundle() {
         let parity: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/bundle_v2_bsc97_invalid_vm.json"
+            "../../../tests/fixtures/bundle_v2_bsc97_invalid_vm.json"
         ))
         .unwrap();
         let debug: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/bundle_v2_bsc97_debug_many.json"
+            "../../../tests/fixtures/bundle_v2_bsc97_debug_many.json"
         ))
         .unwrap();
         let calls: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/bundle_v2_bsc97_requests.json"
+            "../../../tests/fixtures/bundle_v2_bsc97_requests.json"
         ))
         .unwrap();
         let invalid = &parity["result"][2];
-        assert!(crate::vm_trace::extract_logs(
+        assert!(crate::api::v2::vm_trace::extract_logs(
             &invalid["vmTrace"],
             invalid["trace"].as_array().unwrap()
         )
@@ -862,14 +866,14 @@ mod bsc97_recovery_tests {
             async {
                 let res = warp::test::request()
                     .method("POST")
-                    .path("/simulate_bundle_v2")
+                    .path("/simulate_bundle")
                     .json(&calls)
                     .reply(&route().recover(crate::errors::handle_rejection))
                     .await;
                 assert_eq!(res.status(), 200, "{}", String::from_utf8_lossy(res.body()));
                 let result: Value = serde_json::from_slice(res.body()).unwrap();
                 let expected_logs: Value = serde_json::from_str(include_str!(
-                    "../tests/fixtures/bundle_v2_bsc97_expected_logs.json"
+                    "../../../tests/fixtures/bundle_v2_bsc97_expected_logs.json"
                 ))
                 .unwrap();
                 for (i, n) in [1, 1, 6].iter().enumerate() {

@@ -210,11 +210,11 @@ mod tests {
     use super::*;
     fn fixtures() -> (Vec<Value>, Value) {
         let original: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/bundle_v2_bsc97_invalid_vm.json"
+            "../../../tests/fixtures/bundle_v2_bsc97_invalid_vm.json"
         ))
         .unwrap();
         let replay: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/bundle_v2_bsc97_debug_many.json"
+            "../../../tests/fixtures/bundle_v2_bsc97_debug_many.json"
         ))
         .unwrap();
         (

@@ -1078,13 +1078,13 @@ mod tests {
     #[test]
     fn decodes_recorded_usdt_events() {
         let expected: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/vm_trace_usdt_expected.json"
+            "../../../tests/fixtures/vm_trace_usdt_expected.json"
         ))
         .unwrap();
 
         assert_eq!(
             decoded_fixture(include_str!(
-                "../tests/fixtures/vm_trace_usdt_response.json"
+                "../../../tests/fixtures/vm_trace_usdt_response.json"
             )),
             *expected.as_array().unwrap()
         );
@@ -1093,12 +1093,12 @@ mod tests {
     #[test]
     fn matches_call_tracer_for_real_nested_calls_with_a_caught_revert() {
         let expected: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/vm_trace_nested_expected.json"
+            "../../../tests/fixtures/vm_trace_nested_expected.json"
         ))
         .unwrap();
         assert_eq!(
             decoded_fixture(include_str!(
-                "../tests/fixtures/vm_trace_nested_response.json"
+                "../../../tests/fixtures/vm_trace_nested_response.json"
             )),
             *expected.as_array().unwrap()
         );
@@ -1107,12 +1107,12 @@ mod tests {
     #[test]
     fn maps_real_precompile_and_empty_code_calls_before_a_logged_child() {
         let expected: Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/vm_trace_precompile_expected.json"
+            "../../../tests/fixtures/vm_trace_precompile_expected.json"
         ))
         .unwrap();
         assert_eq!(
             decoded_fixture(include_str!(
-                "../tests/fixtures/vm_trace_precompile_response.json"
+                "../../../tests/fixtures/vm_trace_precompile_response.json"
             )),
             *expected.as_array().unwrap()
         );

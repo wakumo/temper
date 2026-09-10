@@ -3,9 +3,9 @@ use std::{fs::File, sync::Arc};
 use alloy::primitives::U256;
 use dashmap::DashMap;
 use enso_temper::{
+    api::v1::routes as simulate_routes,
     config::config,
     errors::{handle_rejection, ErrorMessage},
-    simulate_routes,
     simulation::{
         AppVersionResponse, SimulationRequest, SimulationResponse, StatefulSimulationEndResponse,
         StatefulSimulationResponse,
