@@ -97,7 +97,7 @@ where
 }
 
 pub fn route() -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
-    warp::path!("simulate_bundle")
+    warp::path!("simulate-bundle")
         .and(warp::post())
         .and(warp::body::content_length_limit(2 * 1024 * 1024))
         .and(warp::body::json::<Vec<SimulationRequest>>())
@@ -756,7 +756,7 @@ mod api_tests {
         let api = route().recover(crate::errors::handle_rejection);
         let res = warp::test::request()
             .method("POST")
-            .path("/simulate_bundle")
+            .path("/simulate-bundle")
             .json(&json!([]))
             .reply(&api)
             .await;
@@ -768,7 +768,7 @@ mod api_tests {
         calls[2]["chainId"] = json!(56);
         let res = warp::test::request()
             .method("POST")
-            .path("/simulate_bundle")
+            .path("/simulate-bundle")
             .json(&calls)
             .reply(&api)
             .await;
@@ -813,7 +813,7 @@ mod api_tests {
                 }
                 let res = warp::test::request()
                     .method("POST")
-                    .path("/simulate_bundle")
+                    .path("/simulate-bundle")
                     .json(&calls)
                     .reply(&route().recover(crate::errors::handle_rejection))
                     .await;
@@ -883,7 +883,7 @@ mod api_tests {
             async {
                 let response = warp::test::request()
                     .method("POST")
-                    .path("/simulate_bundle")
+                    .path("/simulate-bundle")
                     .json(&calls)
                     .reply(&route().recover(crate::errors::handle_rejection))
                     .await;
@@ -1045,7 +1045,7 @@ mod bsc97_recovery_tests {
             async {
                 let res = warp::test::request()
                     .method("POST")
-                    .path("/simulate_bundle")
+                    .path("/simulate-bundle")
                     .json(&calls)
                     .reply(&route().recover(crate::errors::handle_rejection))
                     .await;

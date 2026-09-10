@@ -24,7 +24,7 @@ fn filter(
 async fn stateful_bundle_is_registered_under_api_v2() {
     let response = warp::test::request()
         .method("POST")
-        .path("/api/v2/simulate_bundle")
+        .path("/api/v2/simulate-bundle")
         .json(&json!([]))
         .reply(&filter(None))
         .await;
@@ -39,7 +39,7 @@ async fn rejects_old_and_cross_version_bundle_paths() {
         "/api/v1/simulate_bundle_v2",
         "/api/v1/simulate_bundle",
         "/api/v2/simulate_bundle_v2",
-        "/api/v2/simulate-bundle",
+        "/api/v2/simulate_bundle",
         "/api/v2/simulate",
     ] {
         let response = warp::test::request()
@@ -70,7 +70,7 @@ async fn preserves_v1_version_and_independent_bundle_routes() {
 
 #[tokio::test]
 async fn both_versions_require_the_configured_api_key() {
-    for path in ["/api/v1/simulate-bundle", "/api/v2/simulate_bundle"] {
+    for path in ["/api/v1/simulate-bundle", "/api/v2/simulate-bundle"] {
         let api = filter(Some("test-key"));
         let missing = warp::test::request()
             .method("POST")
