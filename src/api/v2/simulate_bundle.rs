@@ -6,7 +6,12 @@ use foundry_evm::revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::types::CallKind;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{str::FromStr, time::Duration};
+use std::{
+    str::FromStr,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio::sync::Semaphore;
 use warp::{reply::Json, Filter, Rejection};
 
 #[derive(Serialize)]
@@ -24,11 +29,71 @@ pub struct BundleV2Error {
     pub message: String,
 }
 impl warp::reject::Reject for BundleV2Error {}
+
+#[derive(Debug)]
+enum NormalizeError {
+    Invalid(String),
+    VmLogDecode(String),
+}
+
+impl NormalizeError {
+    fn into_message(self) -> String {
+        match self {
+            Self::Invalid(message) | Self::VmLogDecode(message) => message,
+        }
+    }
+}
+
+impl From<&str> for NormalizeError {
+    fn from(message: &str) -> Self {
+        Self::Invalid(message.into())
+    }
+}
+
+impl From<String> for NormalizeError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
 fn rejection(status: u16, message: impl Into<String>) -> Rejection {
     warp::reject::custom(BundleV2Error {
         status,
         message: message.into(),
     })
+}
+
+const MAX_CONCURRENT_DECODES: usize = 4;
+static DECODE_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+async fn spawn_decode<F, T>(work: F) -> Result<T, Rejection>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let semaphore = DECODE_SEMAPHORE
+        .get_or_init(|| Arc::new(Semaphore::new(MAX_CONCURRENT_DECODES)))
+        .clone();
+    spawn_decode_with(semaphore, work).await
+}
+
+async fn spawn_decode_with<F, T>(semaphore: Arc<Semaphore>, work: F) -> Result<T, Rejection>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|_| rejection(500, "BUNDLE_DECODE_GATE_CLOSED"))?;
+    tokio::task::spawn_blocking(move || {
+        // Keep the permit in the blocking task so cancellation of the caller
+        // cannot admit more decode work before this task actually finishes.
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|_| rejection(500, "BUNDLE_DECODE_TASK_FAILED"))
 }
 
 pub fn route() -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
@@ -108,15 +173,17 @@ pub async fn simulate(calls: Vec<SimulationRequest>) -> Result<Json, Rejection> 
             .ok_or_else(|| rejection(502, "INVALID_BUNDLE_RESULT_COUNT"))?;
         // CPU work does not block the async HTTP runtime. Trace size is bounded above.
         let results = results.clone();
-        let (calls, results, decoded) = tokio::task::spawn_blocking(move || {
+        let (calls, results, decoded) = spawn_decode(move || {
             let decoded = normalize_batch(&calls, block, &results, None);
             (calls, results, decoded)
         })
-        .await
-        .map_err(|_| rejection(500, "BUNDLE_DECODE_TASK_FAILED"))?;
+        .await?;
         match decoded {
             Ok(response) => Ok(response),
-            Err(error) => {
+            Err(NormalizeError::Invalid(error)) => {
+                Err(rejection(502, format!("INVALID_BUNDLE_RESULT: {error}")))
+            }
+            Err(NormalizeError::VmLogDecode(error)) => {
                 log::warn!(target: "ts::api", "trace_callMany decode failed on chain {}: {}; replaying pinned bundle with debug_traceCallMany", calls[0].chain_id, error);
                 let params = rpc_params(&calls, block).map_err(|e| rejection(400, e))?;
                 let transactions: Vec<Value> = params[0].as_array().expect("validated RPC params")
@@ -126,11 +193,11 @@ pub async fn simulate(calls: Vec<SimulationRequest>) -> Result<Json, Rejection> 
                     {"blockNumber": format!("0x{block:x}"), "transactionIndex": -1},
                     {"tracer": "callTracer", "tracerConfig": {"withLog": true}}
                 ])).await?;
-                tokio::task::spawn_blocking(move || {
+                spawn_decode(move || {
                     let logs = super::bundle_call_tracer::verified_logs(&results, &debug)?;
                     normalize_batch(&calls, block, &results, Some(&logs))
-                }).await
-                    .map_err(|_| rejection(500, "BUNDLE_DECODE_TASK_FAILED"))?
+                        .map_err(NormalizeError::into_message)
+                }).await?
                     .map_err(|e| rejection(502, format!("INVALID_BUNDLE_REPLAY: {e}")))
             }
         }
@@ -145,7 +212,7 @@ fn normalize_batch(
     block: u64,
     results: &[Value],
     recovered_logs: Option<&[Vec<Value>]>,
-) -> Result<Vec<BundleV2Response>, String> {
+) -> Result<Vec<BundleV2Response>, NormalizeError> {
     calls
         .iter()
         .zip(results)
@@ -154,7 +221,9 @@ fn normalize_batch(
             let error = result["trace"]
                 .as_array()
                 .and_then(|traces| traces.iter().find(|t| t["traceAddress"] == json!([])))
-                .and_then(|root| root["error"].as_str())
+                .map(trace_error)
+                .transpose()?
+                .flatten()
                 .map(str::to_owned);
             format_result_with_logs(call, block, i, result, recovered_logs.map(|logs| &logs[i]))
                 .map(|simulation| BundleV2Response {
@@ -337,7 +406,9 @@ mod normalization_tests {
         let (calls, mut results) = fixtures();
         results.swap(1, 2);
         assert_eq!(
-            normalize_batch(&calls, 25936975, &results, None).err(),
+            normalize_batch(&calls, 25936975, &results, None)
+                .err()
+                .map(NormalizeError::into_message),
             Some("ROOT_CALL_MISMATCH".into())
         );
     }
@@ -427,6 +498,22 @@ mod normalization_tests {
         assert!(format_result(&call(), 123, 0, result).unwrap().success);
     }
 
+    #[test]
+    fn treats_null_error_as_success_for_result_and_movement_traces() {
+        let (calls, mut results) = fixtures();
+        let root = results[0]["trace"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|trace| trace["traceAddress"] == json!([]))
+            .unwrap();
+        root["error"] = Value::Null;
+
+        let result = format_result(&calls[0], 25936975, 0, results[0].clone()).unwrap();
+        assert!(result.success);
+        assert!(!result.trace.is_empty());
+    }
+
     fn call() -> SimulationRequest {
         serde_json::from_value(json!({"chainId":1,"from":"0x0000000000000000000000000000000000000001","to":"0x0000000000000000000000000000000000000002","gasLimit":100000,"request_id":"step-1"})).unwrap()
     }
@@ -465,12 +552,21 @@ mod normalization_tests {
         assert_eq!(result.return_data.to_string(), "0x1234");
     }
 }
+fn trace_error(trace: &Value) -> Result<Option<&str>, String> {
+    match trace.get("error") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(error)) => Ok(Some(error)),
+        Some(_) => Err("INVALID_TRACE_ERROR".into()),
+    }
+}
+
 fn movement_traces(traces: &[Value]) -> Result<Vec<CallTrace>, String> {
-    let failed = traces
-        .iter()
-        .filter(|t| t.get("error").is_some())
-        .map(path)
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut failed = Vec::new();
+    for trace in traces {
+        if trace_error(trace)?.is_some() {
+            failed.push(path(trace)?);
+        }
+    }
     let mut output = Vec::new();
     for t in traces {
         let p = path(t)?;
@@ -545,7 +641,7 @@ fn format_result(
     index: usize,
     result: Value,
 ) -> Result<SimulationResponse, String> {
-    format_result_with_logs(call, block, index, &result, None)
+    format_result_with_logs(call, block, index, &result, None).map_err(NormalizeError::into_message)
 }
 
 fn format_result_with_logs(
@@ -554,7 +650,7 @@ fn format_result_with_logs(
     index: usize,
     result: &Value,
     recovered_logs: Option<&Vec<Value>>,
-) -> Result<SimulationResponse, String> {
+) -> Result<SimulationResponse, NormalizeError> {
     let traces = result["trace"]
         .as_array()
         .filter(|t| !t.is_empty())
@@ -581,7 +677,8 @@ fn format_result_with_logs(
     {
         return Err("ROOT_CALL_MISMATCH".into());
     }
-    let success = root.get("error").is_none();
+    let root_error = trace_error(root)?;
+    let success = root_error.is_none();
     let gas_limit = call.gas_limit.unwrap_or(DEFAULT_GAS);
     let gas_used = if success {
         let intrinsic = gas_limit
@@ -590,10 +687,7 @@ fn format_result_with_logs(
         intrinsic
             .checked_add(hex_number(&root["result"]["gasUsed"])?)
             .ok_or("INVALID_TRACE_GAS")?
-    } else if root["error"]
-        .as_str()
-        .is_some_and(|s| s.to_ascii_lowercase().contains("revert"))
-    {
+    } else if root_error.is_some_and(|error| error.to_ascii_lowercase().contains("revert")) {
         let used = &result["vmTrace"]["ops"]
             .as_array()
             .and_then(|ops| ops.last())
@@ -610,7 +704,8 @@ fn format_result_with_logs(
     }
     let raw_logs = match recovered_logs {
         Some(logs) => logs.clone(),
-        None => super::vm_trace::extract_logs(&result["vmTrace"], traces)?,
+        None => super::vm_trace::extract_logs(&result["vmTrace"], traces)
+            .map_err(NormalizeError::VmLogDecode)?,
     };
     let logs = raw_logs
         .iter()
@@ -641,7 +736,7 @@ fn format_result_with_logs(
         exit_reason: if success {
             InstructionResult::Return
         } else {
-            failure_reason(root["error"].as_str().ok_or("INVALID_TRACE_ERROR")?)
+            failure_reason(root_error.ok_or("INVALID_TRACE_ERROR")?)
         },
         return_data: bytes(&result["output"])?,
         state_diff: if call.include_state_diff == Some(true) {
@@ -753,6 +848,54 @@ mod api_tests {
         .await;
         server.abort();
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_provider_shape_fails_without_debug_replay() {
+        let observed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = observed.clone();
+        let mut fixture: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/vm_trace_usdt_response.json"
+        ))
+        .unwrap();
+        fixture["result"][0]["trace"][0]["action"]["input"] = json!("0xdeadbeef");
+        let rpc_route = warp::post()
+            .and(warp::body::json())
+            .map(move |body: Value| {
+                let method = body["method"].as_str().unwrap().to_owned();
+                seen.lock().unwrap().push(method.clone());
+                warp::reply::json(&match method.as_str() {
+                    "eth_chainId" => json!({"result":"0x1"}),
+                    "trace_callMany" => fixture.clone(),
+                    "debug_traceCallMany" => json!({"result": []}),
+                    other => panic!("unexpected RPC {other}"),
+                })
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(warp::serve(rpc_route).incoming(listener).run());
+        let calls: Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/bundle_v2_requests.json"
+        ))
+        .unwrap();
+
+        temp_env::async_with_vars(
+            [("BASE_BLOCKCHAIN_NODE_URL", Some(format!("http://{addr}")))],
+            async {
+                let response = warp::test::request()
+                    .method("POST")
+                    .path("/simulate_bundle")
+                    .json(&calls)
+                    .reply(&route().recover(crate::errors::handle_rejection))
+                    .await;
+                assert_eq!(response.status(), 502);
+                let body: Value = serde_json::from_slice(response.body()).unwrap();
+                assert_eq!(body["message"], "INVALID_BUNDLE_RESULT: ROOT_CALL_MISMATCH");
+                assert_eq!(*observed.lock().unwrap(), ["eth_chainId", "trace_callMany"]);
+            },
+        )
+        .await;
+        server.abort();
+    }
 }
 
 #[cfg(test)]
@@ -776,6 +919,42 @@ mod rpc_error_tests {
         assert_eq!(err.status, 502);
         assert_eq!(err.message, "QUICKNODE_RPC_ERROR_trace_callMany");
         server.abort();
+    }
+}
+
+#[cfg(test)]
+mod decode_gate_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancelled_caller_does_not_release_permit_before_decode_finishes() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_gate = semaphore.clone();
+        let first = tokio::spawn(async move {
+            spawn_decode_with(first_gate, move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        first.abort();
+
+        let blocked = tokio::time::timeout(
+            Duration::from_millis(50),
+            spawn_decode_with(semaphore.clone(), || ()),
+        )
+        .await;
+        assert!(blocked.is_err());
+
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), spawn_decode_with(semaphore, || ()))
+            .await
+            .unwrap()
+            .unwrap();
     }
 }
 
