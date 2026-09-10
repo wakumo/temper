@@ -320,6 +320,111 @@ mod tests {
 #[cfg(test)]
 mod normalization_tests {
     use super::*;
+    fn fixtures() -> (Vec<SimulationRequest>, Vec<Value>) {
+        let calls = serde_json::from_str(include_str!("../tests/fixtures/bundle_v2_requests.json"))
+            .unwrap();
+        let response: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/vm_trace_usdt_response.json"
+        ))
+        .unwrap();
+        (calls, response["result"].as_array().unwrap().clone())
+    }
+
+    #[test]
+    fn rejects_reordered_results_with_same_sender_and_recipient() {
+        let (calls, mut results) = fixtures();
+        results.swap(1, 2);
+        assert_eq!(
+            normalize_batch(&calls, 25936975, &results, None).err(),
+            Some("ROOT_CALL_MISMATCH".into())
+        );
+    }
+
+    #[test]
+    fn rejects_root_value_mismatch_even_when_input_matches() {
+        let (mut calls, results) = fixtures();
+        calls[0].value = Some(crate::simulation::PermissiveUint(U256::from(1)));
+        assert_eq!(
+            format_result(&calls[0], 25936975, 0, results[0].clone()).unwrap_err(),
+            "ROOT_CALL_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn rejects_non_call_root_types() {
+        let (calls, results) = fixtures();
+        for (field, value) in [
+            ("callType", "delegatecall"),
+            ("callType", "staticcall"),
+            ("callType", "callcode"),
+            ("type", "create"),
+        ] {
+            let mut result = results[0].clone();
+            let root = result["trace"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|t| t["traceAddress"] == json!([]))
+                .unwrap();
+            if field == "type" {
+                root[field] = json!(value);
+            } else {
+                root["action"][field] = json!(value);
+            }
+            assert_eq!(
+                format_result(&calls[0], 25936975, 0, result).unwrap_err(),
+                "ROOT_CALL_MISMATCH",
+                "{field}={value}"
+            );
+        }
+    }
+
+    #[test]
+    fn identical_calls_keep_each_results_position_and_optional_request_id() {
+        let (calls, results) = fixtures();
+        let mut first = calls[0].clone();
+        first.request_id = Some("first".into());
+        let mut second = first.clone();
+        second.request_id = None;
+        let mut failed = results[0].clone();
+        let root = failed["trace"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|t| t["traceAddress"] == json!([]))
+            .unwrap();
+        root["error"] = json!("Out of gas");
+        root.as_object_mut().unwrap().remove("result");
+        failed["output"] = json!("0x");
+        let responses = normalize_batch(
+            &[first, second],
+            25936975,
+            &[results[0].clone(), failed],
+            None,
+        )
+        .unwrap();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0].simulation.request_id.as_deref(), Some("first"));
+        assert_eq!(responses[1].simulation.request_id, None);
+        assert_eq!(responses[0].simulation.simulation_id, 1);
+        assert_eq!(responses[1].simulation.simulation_id, 2);
+        assert!(responses[0].simulation.success);
+        assert!(!responses[1].simulation.success);
+    }
+
+    #[test]
+    fn accepts_default_empty_data_and_zero_value_with_equivalent_hex() {
+        let root = trace(
+            json!([]),
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+            "0x00",
+            "call",
+        );
+        let result = json!({"output":"0x","trace":[root],"vmTrace":{"code":"0x00","ops":[{"op":"STOP","pc":0,"sub":null,"ex":{"push":[],"mem":null}}]}});
+        assert!(format_result(&call(), 123, 0, result).unwrap().success);
+    }
+
     fn call() -> SimulationRequest {
         serde_json::from_value(json!({"chainId":1,"from":"0x0000000000000000000000000000000000000001","to":"0x0000000000000000000000000000000000000002","gasLimit":100000,"request_id":"step-1"})).unwrap()
     }
@@ -349,7 +454,9 @@ mod normalization_tests {
         root["error"] = json!("Reverted");
         root.as_object_mut().unwrap().remove("result");
         let r = json!({"output":"0x1234","trace":[root],"vmTrace":{"code":"0xfd","ops":[{"op":"REVERT","pc":0,"ex":{"used":123,"push":[],"mem":null},"sub":null}]}});
-        let result = format_result(&call(), 123, 0, r).unwrap();
+        let mut request = call();
+        request.value = Some(crate::simulation::PermissiveUint(U256::from(1)));
+        let result = format_result(&request, 123, 0, r).unwrap();
         assert!(!result.success);
         assert!(result.logs.is_empty());
         assert!(result.trace.is_empty());
@@ -458,7 +565,17 @@ fn format_result_with_logs(
         return Err("INVALID_ROOT_TRACE".into());
     }
     let root = roots[0];
-    if address(&root["action"]["from"])? != call.from || address(&root["action"]["to"])? != call.to
+    // Results stay paired by index, including identical calls. Validate the root
+    // against that request before using its execution result or echoing its ID.
+    let action = &root["action"];
+    if root["type"] != "call"
+        || action["callType"] != "call"
+        || address(&action["from"])? != call.from
+        || address(&action["to"])? != call.to
+        || bytes(&action["input"])? != call.data.clone().unwrap_or_default()
+        || U256::from_str(action["value"].as_str().ok_or("MISSING_VALUE")?)
+            .map_err(|_| "INVALID_VALUE")?
+            != call.value.map(|v| v.0).unwrap_or_default()
     {
         return Err("ROOT_CALL_MISMATCH".into());
     }
