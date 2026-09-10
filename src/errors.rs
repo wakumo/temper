@@ -64,7 +64,13 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
     let code;
     let message: String;
     println!("Handling rejection: {:?}", err);
-    if err.is_not_found() {
+    if let Some(e) = err.find::<crate::api::v2::simulate_bundle::BundleV2Error>() {
+        code = StatusCode::from_u16(e.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        message = e.message.clone();
+    } else if err.find::<warp::reject::PayloadTooLarge>().is_some() {
+        code = StatusCode::PAYLOAD_TOO_LARGE;
+        message = "PAYLOAD_TOO_LARGE".into();
+    } else if err.is_not_found() {
         code = StatusCode::NOT_FOUND;
         message = "NOT_FOUND".to_string();
     } else if let Some(_e) = err.find::<StateNotFound>() {
