@@ -6,6 +6,24 @@
 
 ![cover](cover.jpg)
 
+## Simulation chain policy
+
+`WHITELIST_CHAIN_IDS` is a comma-separated list loaded at startup. If unset, it
+allows `1,137,56,8217,97`. An explicitly empty value disables all simulation
+chains; malformed or zero IDs stop startup. Restart the service after changing
+this setting. For example, `WHITELIST_CHAIN_IDS=1,56,8217,97` disables Polygon.
+
+All v1 simulation routes and the v2 bundle route validate the complete request
+before contacting an RPC provider. A chain outside the whitelist returns HTTP
+400 with `{"code":400,"message":"CHAIN_ID_NOT_SUPPORTED"}`. Stateful session
+cleanup (`DELETE`) remains available. Authentication requirements are unchanged.
+
+The local simulation workflow uses REVM with a direct, cached fork backend.
+It no longer launches Anvil, and `USE_ANVIL` has no effect. QuickNode simulation
+and the optional `trace_call` for state differences remain available. See
+[the fork RPC investigation](docs/direct-fork-rpc.md) for methods, request counts,
+and the comparison with upstream Temper.
+
 ## 📫 API 📫
 
 ### POST /api/v1/simulate

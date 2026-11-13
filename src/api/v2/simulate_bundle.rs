@@ -96,11 +96,14 @@ where
     .map_err(|_| rejection(500, "BUNDLE_DECODE_TASK_FAILED"))
 }
 
-pub fn route() -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
+pub fn route(
+    config: crate::config::Config,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = Rejection> + Clone {
     warp::path!("simulate-bundle")
         .and(warp::post())
         .and(warp::body::content_length_limit(2 * 1024 * 1024))
         .and(warp::body::json::<Vec<SimulationRequest>>())
+        .and(warp::any().map(move || config.clone()))
         .and_then(simulate)
 }
 
@@ -147,7 +150,13 @@ async fn rpc(
         .ok_or_else(|| rejection(502, "MISSING_QUICKNODE_RESULT"))
 }
 
-pub async fn simulate(calls: Vec<SimulationRequest>) -> Result<Json, Rejection> {
+pub async fn simulate(
+    calls: Vec<SimulationRequest>,
+    config: crate::config::Config,
+) -> Result<Json, Rejection> {
+    for call in &calls {
+        config.ensure_chain_supported(call.chain_id)?;
+    }
     let requested_block = validate(&calls).map_err(|e| rejection(400, e))?;
     let url = crate::quicknode::quicknode_url(calls[0].chain_id)
         .map_err(|_| rejection(503, "QUICKNODE_NOT_CONFIGURED"))?;
@@ -753,7 +762,7 @@ mod api_tests {
     use std::sync::{Arc, Mutex};
     #[tokio::test]
     async fn validates_before_any_provider_call() {
-        let api = route().recover(crate::errors::handle_rejection);
+        let api = route(crate::config::Config::default()).recover(crate::errors::handle_rejection);
         let res = warp::test::request()
             .method("POST")
             .path("/simulate-bundle")
@@ -815,7 +824,10 @@ mod api_tests {
                     .method("POST")
                     .path("/simulate-bundle")
                     .json(&calls)
-                    .reply(&route().recover(crate::errors::handle_rejection))
+                    .reply(
+                        &route(crate::config::Config::default())
+                            .recover(crate::errors::handle_rejection),
+                    )
                     .await;
                 assert_eq!(res.status(), 200, "{}", String::from_utf8_lossy(res.body()));
                 let actual: Value = serde_json::from_slice(res.body()).unwrap();
@@ -885,7 +897,10 @@ mod api_tests {
                     .method("POST")
                     .path("/simulate-bundle")
                     .json(&calls)
-                    .reply(&route().recover(crate::errors::handle_rejection))
+                    .reply(
+                        &route(crate::config::Config::default())
+                            .recover(crate::errors::handle_rejection),
+                    )
                     .await;
                 assert_eq!(response.status(), 502);
                 let body: Value = serde_json::from_slice(response.body()).unwrap();
@@ -1047,7 +1062,10 @@ mod bsc97_recovery_tests {
                     .method("POST")
                     .path("/simulate-bundle")
                     .json(&calls)
-                    .reply(&route().recover(crate::errors::handle_rejection))
+                    .reply(
+                        &route(crate::config::Config::default())
+                            .recover(crate::errors::handle_rejection),
+                    )
                     .await;
                 assert_eq!(res.status(), 200, "{}", String::from_utf8_lossy(res.body()));
                 let result: Value = serde_json::from_slice(res.body()).unwrap();

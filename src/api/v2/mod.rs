@@ -5,6 +5,8 @@ mod vm_trace;
 
 use warp::{Filter, Rejection, Reply};
 
-pub fn routes() -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    simulate_bundle::route()
+pub fn routes(
+    config: crate::config::Config,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    simulate_bundle::route(config)
 }

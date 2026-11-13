@@ -5,6 +5,9 @@ on:
     tags: [v*]
   pull_request:
     branches: [main]
+env:
+  # Pinned libmdbx predates C23; newer GCC defaults break its noreturn macro.
+  CFLAGS: -std=gnu17
 jobs:
   test:
     runs-on: ubuntu-latest

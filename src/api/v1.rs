@@ -13,9 +13,9 @@ pub fn routes(
     app_version()
         .or(simulate(config.clone()))
         .or(simulate_bundle(config.clone()))
-        .or(simulate_stateful_new(config, state.clone()))
+        .or(simulate_stateful_new(config.clone(), state.clone()))
         .or(simulate_stateful_end(state.clone()))
-        .or(simulate_stateful(state))
+        .or(simulate_stateful(config, state))
 }
 
 /// GET /version
@@ -70,11 +70,13 @@ pub fn simulate_stateful_end(
 
 /// POST /simulate-stateful/{statefulSimulationId}
 pub fn simulate_stateful(
+    config: Config,
     state: Arc<SharedSimulationState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     warp::path!("simulate-stateful" / Uuid)
         .and(warp::post())
         .and(json_body())
+        .and(with_config(config))
         .and(with_state(state))
         .and_then(simulation::simulate_stateful)
 }

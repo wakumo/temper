@@ -11,8 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -L https://foundry.paradigm.xyz | bash && \
-    /root/.foundry/bin/foundryup
 COPY . .
 
 RUN cargo build --release
@@ -25,7 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/target/release/enso-temper /enso-temper
-COPY --from=build /root/.foundry/bin/anvil /usr/local/bin/anvil
 EXPOSE 8080
 
 CMD ["./enso-temper"]
