@@ -34,7 +34,7 @@ pub fn quicknode_url(chain_id: u64) -> Result<String, QuickNodeSkip> {
     let base_url =
         env::var("BASE_BLOCKCHAIN_NODE_URL").map_err(|_| QuickNodeSkip::MissingConfig)?;
     Ok(format!(
-        "{}/{}?provider=quicknode",
+        "{}/{}?provider=quicknode&client=temper",
         base_url.trim_end_matches('/'),
         chain_id
     ))
@@ -335,7 +335,10 @@ mod tests {
             )],
             || {
                 let url = quicknode_url(56).unwrap();
-                assert_eq!(url, "https://nodes.example.com/56?provider=quicknode");
+                assert_eq!(
+                    url,
+                    "https://nodes.example.com/56?provider=quicknode&client=temper"
+                );
             },
         );
     }
@@ -350,11 +353,11 @@ mod tests {
             || {
                 assert_eq!(
                     quicknode_url(1).unwrap(),
-                    "https://nodes.example.com/1?provider=quicknode"
+                    "https://nodes.example.com/1?provider=quicknode&client=temper"
                 );
                 assert_eq!(
                     quicknode_url(8453).unwrap(),
-                    "https://nodes.example.com/8453?provider=quicknode"
+                    "https://nodes.example.com/8453?provider=quicknode&client=temper"
                 );
             },
         );

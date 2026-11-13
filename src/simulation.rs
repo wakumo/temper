@@ -213,7 +213,7 @@ mod tests {
             Some("https://nodes.example.com/"),
             || {
                 let url = chain_id_to_fork_url(56).unwrap();
-                assert_eq!(url, "https://nodes.example.com/56");
+                assert_eq!(url, "https://nodes.example.com/56?client=temper");
             },
         );
     }
@@ -290,7 +290,8 @@ fn construct_url(base_url: &str) -> Result<String, Rejection> {
 fn chain_id_to_fork_url(chain_id: u64) -> Result<String, Rejection> {
     let base_url = env::var("BASE_BLOCKCHAIN_NODE_URL")
         .map_err(|_| warp::reject::custom(NoURLForChainIdError))?;
-    construct_url(&format!("{}/{}", base_url.trim_end_matches('/'), chain_id))
+    let url = construct_url(&format!("{}/{}", base_url.trim_end_matches('/'), chain_id))?;
+    Ok(format!("{url}?client=temper"))
 }
 
 fn fork_url_for(config: &Config, chain_id: u64) -> Result<String, Rejection> {
