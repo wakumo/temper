@@ -9,6 +9,7 @@ fn filter(
     api_key: Option<&str>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = std::convert::Infallible> + Clone {
     let config = Config {
+        whitelist_chain_ids: enso_temper::config::DEFAULT_WHITELIST_CHAIN_IDS.to_vec(),
         port: 8080,
         fork_url: None,
         etherscan_key: None,
@@ -90,4 +91,21 @@ async fn both_versions_require_the_configured_api_key() {
         // Empty bundles reach the version-specific request validator.
         assert_eq!(authorized.status(), 400, "{path}");
     }
+}
+
+#[tokio::test]
+async fn rejects_unlisted_chain_before_stateful_session_lookup() {
+    let response = warp::test::request()
+        .method("POST")
+        .path("/api/v1/simulate-stateful/00000000-0000-0000-0000-000000000001")
+        .json(&json!([{
+            "chainId": 10,
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002"
+        }]))
+        .reply(&filter(None))
+        .await;
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+    assert_eq!(body["message"], "CHAIN_ID_NOT_SUPPORTED");
 }

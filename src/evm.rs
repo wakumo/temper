@@ -17,7 +17,6 @@ use alloy::{
     consensus::BlockHeader,
     eips::BlockId,
     network::{AnyNetwork, AnyRpcBlock, TransactionBuilder},
-    node_bindings::{Anvil, AnvilInstance},
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionRequest,
 };
@@ -437,14 +436,6 @@ fn configure_tx_env(tx_req: TransactionRequest, chain_id: u64) -> TxEnv {
     }
 }
 
-fn trace_rpc_url<'a>(fork_url: &'a str, use_anvil: bool, execution_rpc_url: &'a str) -> &'a str {
-    if use_anvil {
-        fork_url
-    } else {
-        execution_rpc_url
-    }
-}
-
 fn trace_types(include_state_diff: bool) -> Vec<&'static str> {
     if include_state_diff {
         vec!["trace", "stateDiff"]
@@ -497,7 +488,6 @@ pub struct Evm {
     block: AnyRpcBlock,
     chain_id: u64,
     trace_provider: TraceProvider,
-    _anvil: Option<AnvilInstance>,
     account_overrides: HashMap<Address, AccountOverride>,
     block_timestamp_override: Option<u64>,
     // decoder: CallTraceDecoder,
@@ -511,35 +501,11 @@ impl Evm {
         _gas_limit: u64,
         _etherscan_key: Option<String>,
     ) -> Self {
-        // 🚀 LOCAL ANVIL MODE - 100x faster than remote RPC
-        let use_anvil = std::env::var("USE_ANVIL").unwrap_or_else(|_| "true".to_string()) == "true";
-
-        let (provider, anvil_instance, execution_rpc_url) = if use_anvil {
-            println!("🚀 Using LOCAL ANVIL for {}x performance improvement", 142);
-
-            let mut anvil = Anvil::new().fork(&fork_url);
-            if let Some(block_number) = fork_block_number {
-                anvil = anvil.fork_block_number(block_number);
-            }
-            let anvil = anvil.spawn();
-
-            let provider = ProviderBuilder::new()
-                .network::<AnyNetwork>()
-                .connect_http(anvil.endpoint_url());
-            let execution_rpc_url = anvil.endpoint_url().to_string();
-            (provider, Some(anvil), execution_rpc_url)
-        } else {
-            println!("⚠️ Using REMOTE RPC (slow) - set USE_ANVIL=false to force");
-            let provider = ProviderBuilder::new()
-                .network::<AnyNetwork>()
-                .connect_http(fork_url.parse().unwrap());
-            (provider, None, fork_url.clone())
-        };
-        let trace_provider = ProviderBuilder::new().network::<AnyNetwork>().connect_http(
-            trace_rpc_url(&fork_url, use_anvil, &execution_rpc_url)
-                .parse()
-                .unwrap(),
-        );
+        // Execute locally with REVM; read missing fork state directly from the upstream.
+        let provider = ProviderBuilder::new()
+            .network::<AnyNetwork>()
+            .connect_http(fork_url.parse().unwrap());
+        let trace_provider = provider.clone();
         let chain_id = provider.get_chain_id().await.unwrap();
 
         let block = provider
@@ -549,9 +515,12 @@ impl Evm {
             .unwrap();
         let meta = BlockchainDbMeta::new(block_env_from_block(&block, None), fork_url.clone());
         let db = BlockchainDb::new(meta, foundry_config::Config::foundry_cache_dir());
-        let shared =
-            SharedBackend::spawn_backend(provider.clone(), db, fork_block_id(fork_block_number))
-                .await;
+        let shared = SharedBackend::spawn_backend(
+            provider.clone(),
+            db,
+            Some(BlockId::number(block.header.number())),
+        )
+        .await;
         // let shared: SharedBackend = SharedBackend::spawn_backend(provider.clone(), db, Some(BlockId::Number(BlockNumberOrTag::Number(fork_block_number.unwrap())))).await;
         // let shared: SharedBackend = SharedBackend::spawn_backend(provider.clone(), db, Some(BlockId::number(fork_block_number.unwrap()))).await;
         // let evm: EthEvm<WrapDatabaseRef<SharedBackend>, NoOpInspector> = configure_evm(block.clone(), shared.clone());
@@ -562,7 +531,6 @@ impl Evm {
             block,
             chain_id,
             trace_provider,
-            _anvil: anvil_instance,
             account_overrides: HashMap::new(),
             block_timestamp_override: None,
         }
@@ -988,14 +956,6 @@ mod tests {
         assert!(serialized.get("trace").is_some());
         assert!(serialized.get("logs").is_some());
         assert!(serialized.get("stateDiff").is_some());
-    }
-
-    #[test]
-    fn trace_rpc_url_uses_upstream_when_execution_uses_anvil() {
-        let fork_url = "https://example-rpc.local";
-        let anvil_url = "http://127.0.0.1:8545";
-
-        assert_eq!(trace_rpc_url(fork_url, true, anvil_url), fork_url);
     }
 
     #[test]

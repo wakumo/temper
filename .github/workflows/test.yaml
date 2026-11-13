@@ -25,10 +25,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
 
-      # cache rpc requests
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:

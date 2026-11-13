@@ -20,7 +20,7 @@ pub fn routes(
 
     api_base.and(
         warp::path("v1")
-            .and(v1::routes(config, state))
-            .or(warp::path("v2").and(v2::routes())),
+            .and(v1::routes(config.clone(), state))
+            .or(warp::path("v2").and(v2::routes(config))),
     )
 }

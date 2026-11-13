@@ -9,11 +9,9 @@ homepage = "https://github.com/EnsoFinance/temper"
 repository = "https://github.com/EnsoFinance/temper"
 
 [dependencies]
-anvil = "0.2"
 alloy = { version = "1.0.13", features = [
     "eips",
     "json-rpc",
-    "node-bindings",
     "rpc-client",
     "rpc-types-debug",
     "rpc-types-trace",
@@ -47,6 +45,7 @@ tokio = { version = "1.47.1", features = ["full"] }
 uuid = { version = "1.18.0", features = ["v4", "fast-rng", "serde"] }
 warp = { version = "0.4.2", features = ["server", "test"] }
 sys-info = "0.9.1"
-foundry-fork-db = "0.14"
+# Keep the direct fork backend on the verified standard-RPC implementation.
+foundry-fork-db = "=0.14.0"
 alloy-evm = "0.7.2"
 revm-inspectors = { version = "0.21.0", features = ["std", "js-tracer", "anstyle", "serde"] }

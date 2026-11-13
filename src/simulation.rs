@@ -229,6 +229,7 @@ mod tests {
     fn fork_url_for_uses_config_fork_url_without_shared_base_env() {
         temp_env::with_var("BASE_BLOCKCHAIN_NODE_URL", None::<&str>, || {
             let config = Config {
+                whitelist_chain_ids: crate::config::DEFAULT_WHITELIST_CHAIN_IDS.to_vec(),
                 port: 8080,
                 fork_url: Some("https://custom.example.com".to_string()),
                 etherscan_key: None,
@@ -385,6 +386,7 @@ async fn run_warm_stateless(
 }
 
 pub async fn simulate(transaction: SimulationRequest, config: Config) -> Result<Json, Rejection> {
+    config.ensure_chain_supported(transaction.chain_id)?;
     match simulate_with_quicknode(&transaction).await {
         Ok(Some(response)) => return Ok(warp::reply::json(&response)),
         Ok(None) => {}
@@ -424,7 +426,9 @@ pub async fn simulate_bundle(
     if transactions.is_empty() {
         return Err(warp::reject::custom(EmptyBundleError()));
     }
-
+    for transaction in &transactions {
+        config.ensure_chain_supported(transaction.chain_id)?;
+    }
     let first_chain_id = transactions[0].chain_id;
     let first_block_number = transactions[0].block_number;
 
@@ -502,6 +506,7 @@ pub async fn simulate_stateful_new(
     config: Config,
     state: Arc<SharedSimulationState>,
 ) -> Result<Json, Rejection> {
+    config.ensure_chain_supported(stateful_simulation_request.chain_id)?;
     let fork_url = fork_url_for(&config, stateful_simulation_request.chain_id)?;
     let evm = Evm::new(
         fork_url,
@@ -537,8 +542,15 @@ pub async fn simulate_stateful_end(
 pub async fn simulate_stateful(
     param: Uuid,
     transactions: Vec<SimulationRequest>,
+    config: Config,
     state: Arc<SharedSimulationState>,
 ) -> Result<Json, Rejection> {
+    if transactions.is_empty() {
+        return Err(warp::reject::custom(EmptyBundleError()));
+    }
+    for transaction in &transactions {
+        config.ensure_chain_supported(transaction.chain_id)?;
+    }
     let first_chain_id = transactions[0].chain_id;
     let first_block_number = transactions[0].block_number;
 
