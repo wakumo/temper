@@ -8,6 +8,8 @@ name: test
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned libmdbx predates C23; newer GCC defaults break its noreturn macro.
+  CFLAGS: -std=gnu17
 
 jobs:
   test:
