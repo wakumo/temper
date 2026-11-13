@@ -19,5 +19,5 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_KEY: ${{ secrets.SHARED_AI_PROXY_API_KEY }}
           OPENAI__API_BASE: ${{ secrets.SHARED_AI_PROXY_HOST }}
-          config.model: "gpt-5.5"
-          config.fallback_models: '["gpt-5.4"]'
+          config.model: ${{ vars.SHARED_AI_PROXY_MODEL }}
+          config.fallback_models: ${{ vars.SHARED_AI_PROXY_MODEL_FALLBACKS }}
