@@ -23,6 +23,7 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
                     number: 100,
                     gas_limit: 30_000_000,
                     timestamp: 1_700_000_000,
+                    base_fee_per_gas: Some(100),
                     mix_hash: Some(B256::ZERO),
                     ..Default::default()
                 }
@@ -49,7 +50,7 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
             let result = match request["method"].as_str().unwrap() {
                 "eth_chainId" => json!("0x1"),
                 "eth_getBlockByNumber" => serde_json::to_value(&block).unwrap(),
-                "eth_getBalance" => json!("0xde0b6b3a7640000"),
+                "eth_getBalance" => json!("0x2a"),
                 "eth_getTransactionCount" => json!("0x0"),
                 "eth_getCode" => {
                     if request["params"][0]
@@ -59,8 +60,8 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
                         .unwrap()
                         == target
                     {
-                        // SLOAD(0), store in memory, return the 32-byte value.
-                        json!("0x60005460005260206000f3")
+                        // Return SLOAD(0), GASPRICE, CALLVALUE and BASEFEE.
+                        json!("0x6000546000523a602052346040524860605260806000f3")
                     } else {
                         json!("0x")
                     }
@@ -74,11 +75,11 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/1?client=temper", listener.local_addr().unwrap());
     let server = tokio::spawn(warp::serve(route).incoming(listener).run());
-    let mut evm = Evm::new(url, None, 100_000, None).await;
+    let mut evm = Evm::new(url.clone(), None, 100_000, None).await;
     let request = || CallRawRequest {
         from: sender,
         to: target,
-        value: Some(U256::ZERO),
+        value: Some(U256::from(42)),
         data: Some(Bytes::new()),
         access_list: None,
         format_trace: false,
@@ -89,10 +90,11 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
     };
     let first = evm.call_raw(request()).await.unwrap();
     assert!(first.success);
-    assert_eq!(
-        first.return_data.as_ref(),
-        U256::from(42).to_be_bytes::<32>()
-    );
+    let expected: Vec<u8> = [42u64, 0, 42, 100]
+        .into_iter()
+        .flat_map(|n| U256::from(n).to_be_bytes::<32>())
+        .collect();
+    assert_eq!(first.return_data.as_ref(), expected.as_slice());
     let cold_count = observed.lock().unwrap().len();
     let second = evm.call_raw(request()).await.unwrap();
     assert!(second.success);
@@ -138,5 +140,78 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
     assert_eq!(traced_requests.last().unwrap()["method"], "trace_call");
     assert_eq!(traced_requests.last().unwrap()["params"][2], "0x64");
     println!("cold RPC count: {cold_count}; warm additional RPC count: 0; state diff additional RPC count: 1");
+    assert_eq!(
+        traced_requests.last().unwrap()["params"][0]["gasPrice"],
+        "0x0"
+    );
+
+    // Local execution keeps value funding checks, even for legacy bypass callers.
+    for (options, status, expected_gas_price) in [
+        (json!({}), 200, 0),
+        (
+            json!({"allowInsufficientFunds": false, "gasPrice": "0"}),
+            200,
+            0,
+        ),
+        (
+            json!({"allowInsufficientFunds": true, "value": "43"}),
+            500,
+            0,
+        ),
+        (json!({"value": "43"}), 500, 0),
+        (json!({"gasPrice": "20"}), 500, 0),
+        (json!({"gasPrice": "invalid"}), 400, 0),
+        (json!({"gasPrice": "-1"}), 400, 0),
+        (json!({"gasPrice": "NaN"}), 400, 0),
+        (
+            json!({"gasPrice": "0.000000001", "stateOverrides": {
+                sender.to_string(): {"balance": "100042"}
+            }}),
+            200,
+            1,
+        ),
+        (
+            json!({"value": "0", "stateOverrides": {
+                sender.to_string(): {"balance": "0"}
+            }}),
+            200,
+            0,
+        ),
+    ] {
+        let config = enso_temper::config::Config {
+            fork_url: Some(url.clone()),
+            ..Default::default()
+        };
+        let route = warp::body::json()
+            .and_then(move |request| enso_temper::simulation::simulate(request, config.clone()))
+            .recover(enso_temper::errors::handle_rejection);
+        let mut body = json!({"chainId":1,"from":sender,"to":target,"value":"42","gasLimit":100000,"includeStateDiff":false});
+        body.as_object_mut()
+            .unwrap()
+            .extend(options.as_object().unwrap().clone());
+        let response = warp::test::request()
+            .method("POST")
+            .json(&body)
+            .reply(&route)
+            .await;
+        assert_eq!(
+            response.status(),
+            status,
+            "options={options}: {:?}",
+            response.body()
+        );
+        let result: Value = serde_json::from_slice(response.body()).unwrap();
+        if status == 200 {
+            assert_eq!(result["success"], true);
+            let value = body["value"].as_str().unwrap().parse::<u64>().unwrap();
+            let output: Vec<u8> = [42, expected_gas_price, value, 100]
+                .into_iter()
+                .flat_map(|n| U256::from(n).to_be_bytes::<32>())
+                .collect();
+            assert_eq!(result["returnData"], json!(Bytes::from(output)));
+        } else if status == 500 {
+            assert_eq!(result["message"], "EVM_ERROR");
+        }
+    }
     server.abort();
 }

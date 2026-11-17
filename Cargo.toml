@@ -30,7 +30,7 @@ log = "0.4.27"
 pretty_env_logger = "0.5.0"
 
 
-revm = { version = "23.1.0", default-features = false, features = ["optional_balance_check"] }
+revm = { version = "23.1.0", default-features = false, features = ["optional_balance_check", "optional_no_base_fee"] }
 revm-primitives = { version = "19.0.0", default-features = false }
 reth-db = { git = "https://github.com/paradigmxyz/reth", package = "reth-db", rev = "55f4b0b" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", package = "reth-provider", rev = "55f4b0b" }

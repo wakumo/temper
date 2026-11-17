@@ -44,9 +44,11 @@ pub struct SimulationRequest {
     pub block_number: Option<u64>,
     pub state_overrides: Option<HashMap<Address, StateOverride>>,
     pub format_trace: Option<bool>,
+    /// Legacy option: ignored by local REVM, which always validates sender funds.
     pub allow_insufficient_funds: Option<bool>,
     pub include_state_diff: Option<bool>,
-    pub gas_price: Option<String>, // in gwei format
+    /// Decimal gwei; local REVM defaults to zero when omitted.
+    pub gas_price: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -125,6 +127,30 @@ impl From<State> for StorageOverride {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simulation_gas_price_defaults_to_zero_and_parses_exact_wei() {
+        assert_eq!(parse_simulation_gas_price(None).unwrap(), 0);
+        for (input, expected) in [
+            ("0", 0),
+            ("20", 20_000_000_000),
+            ("0.000000001", 1),
+            ("1.123456789", 1_123_456_789),
+        ] {
+            assert_eq!(parse_simulation_gas_price(Some(input)).unwrap(), expected);
+        }
+        for input in [
+            "",
+            "NaN",
+            "inf",
+            "-1",
+            "0.0000000001",
+            "1.2.3",
+            "340282366920938463463374607431768211455",
+        ] {
+            assert!(parse_simulation_gas_price(Some(input)).is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn simulation_request_accepts_allow_insufficient_funds() {
@@ -302,6 +328,30 @@ fn fork_url_for(config: &Config, chain_id: u64) -> Result<String, Rejection> {
     }
 }
 
+/// Parse decimal gwei into wei without rounding; omitted fees default to zero.
+fn parse_simulation_gas_price(value: Option<&str>) -> Result<u128, InvalidGasPriceError> {
+    let Some(value) = value else { return Ok(0) };
+    let invalid = || InvalidGasPriceError(value.to_owned());
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|b| b.is_ascii_digit())
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+        || fraction.len() > 9
+    {
+        return Err(invalid());
+    }
+    let whole = whole.parse::<u128>().map_err(|_| invalid())?;
+    let fractional_wei = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse::<u128>().map_err(|_| invalid())? * 10u128.pow(9 - fraction.len() as u32)
+    };
+    whole
+        .checked_mul(1_000_000_000)
+        .and_then(|wei| wei.checked_add(fractional_wei))
+        .ok_or_else(invalid)
+}
+
 async fn run_warm_stateless(
     evm: &mut Evm,
     transaction: SimulationRequest,
@@ -321,20 +371,8 @@ async fn run_warm_stateless(
     }
     let override_time = override_start.elapsed();
 
-    // ⏱️ GAS PRICE PARSING
-    let gas_parse_start = Instant::now();
-    let gas_price = match transaction.gas_price {
-        Some(gas_price_str) => match gas_price_str.parse::<f64>() {
-            Ok(gas_price_gwei) => (gas_price_gwei * 1_000_000_000.0) as u128,
-            Err(e) => {
-                log::error!("Invalid gas price format '{}': {}", gas_price_str, e);
-                return Err(warp::reject::custom(InvalidGasPriceError(gas_price_str)));
-            }
-        },
-        None => 20_000_000_000u128, // Default: 20 Gwei
-    };
-    let gas_parse_time = gas_parse_start.elapsed();
-
+    let gas_price = parse_simulation_gas_price(transaction.gas_price.as_deref())
+        .map_err(warp::reject::custom)?;
     // ⏱️ CALL SETUP
     let call_setup_start = Instant::now();
     let call = CallRawRequest {
@@ -344,7 +382,7 @@ async fn run_warm_stateless(
         data: transaction.data,
         access_list: transaction.access_list,
         format_trace: transaction.format_trace.unwrap_or_default(),
-        allow_insufficient_funds: transaction.allow_insufficient_funds.unwrap_or_default(),
+        allow_insufficient_funds: false,
         include_state_diff: transaction.include_state_diff.unwrap_or(true),
         gas_limit: transaction.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
         gas_price,
@@ -376,7 +414,6 @@ async fn run_warm_stateless(
     // 📊 CLEAN PERFORMANCE BENCHMARK
     println!("⏱️  SIMULATION PERFORMANCE:");
     println!("  ├─ State Overrides: {:?}", override_time);
-    println!("  ├─ Gas Price Parse: {:?}", gas_parse_time);
     println!("  ├─ Call Setup:      {:?}", call_setup_time);
     println!("  ├─ EVM Execution:   {:?}", execution_time);
     println!("  ├─ Response Build:  {:?}", response_time);
