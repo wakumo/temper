@@ -16,8 +16,8 @@ use warp::reply::Json;
 use warp::Rejection;
 
 use crate::errors::{
-    EmptyBundleError, IncorrectChainIdError, InvalidBlockNumbersError, MultipleChainIdsError,
-    NoURLForChainIdError, StateNotFound,
+    EmptyBundleError, IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError,
+    MultipleChainIdsError, NoURLForChainIdError, StateNotFound,
 };
 use crate::evm::StorageOverride;
 use crate::quicknode::simulate_with_quicknode;
@@ -44,10 +44,10 @@ pub struct SimulationRequest {
     pub block_number: Option<u64>,
     pub state_overrides: Option<HashMap<Address, StateOverride>>,
     pub format_trace: Option<bool>,
-    /// Legacy option: local REVM simulation always bypasses balance validation.
+    /// Legacy option: ignored by local REVM, which always validates sender funds.
     pub allow_insufficient_funds: Option<bool>,
     pub include_state_diff: Option<bool>,
-    /// In gwei for upstream APIs; ignored by local REVM, which always uses zero.
+    /// Decimal gwei; local REVM defaults to zero when omitted.
     pub gas_price: Option<String>,
 }
 
@@ -127,6 +127,30 @@ impl From<State> for StorageOverride {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simulation_gas_price_defaults_to_zero_and_parses_exact_wei() {
+        assert_eq!(parse_simulation_gas_price(None).unwrap(), 0);
+        for (input, expected) in [
+            ("0", 0),
+            ("20", 20_000_000_000),
+            ("0.000000001", 1),
+            ("1.123456789", 1_123_456_789),
+        ] {
+            assert_eq!(parse_simulation_gas_price(Some(input)).unwrap(), expected);
+        }
+        for input in [
+            "",
+            "NaN",
+            "inf",
+            "-1",
+            "0.0000000001",
+            "1.2.3",
+            "340282366920938463463374607431768211455",
+        ] {
+            assert!(parse_simulation_gas_price(Some(input)).is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn simulation_request_accepts_allow_insufficient_funds() {
@@ -304,6 +328,30 @@ fn fork_url_for(config: &Config, chain_id: u64) -> Result<String, Rejection> {
     }
 }
 
+/// Parse decimal gwei into wei without rounding; omitted fees default to zero.
+fn parse_simulation_gas_price(value: Option<&str>) -> Result<u128, InvalidGasPriceError> {
+    let Some(value) = value else { return Ok(0) };
+    let invalid = || InvalidGasPriceError(value.to_owned());
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty()
+        || !whole.bytes().all(|b| b.is_ascii_digit())
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+        || fraction.len() > 9
+    {
+        return Err(invalid());
+    }
+    let whole = whole.parse::<u128>().map_err(|_| invalid())?;
+    let fractional_wei = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse::<u128>().map_err(|_| invalid())? * 10u128.pow(9 - fraction.len() as u32)
+    };
+    whole
+        .checked_mul(1_000_000_000)
+        .and_then(|wei| wei.checked_add(fractional_wei))
+        .ok_or_else(invalid)
+}
+
 async fn run_warm_stateless(
     evm: &mut Evm,
     transaction: SimulationRequest,
@@ -323,8 +371,8 @@ async fn run_warm_stateless(
     }
     let override_time = override_start.elapsed();
 
-    // Caller fee/funding options are retained for API compatibility, but local
-    // simulation always runs with zero gas price and without balance validation.
+    let gas_price = parse_simulation_gas_price(transaction.gas_price.as_deref())
+        .map_err(warp::reject::custom)?;
     // ⏱️ CALL SETUP
     let call_setup_start = Instant::now();
     let call = CallRawRequest {
@@ -334,10 +382,10 @@ async fn run_warm_stateless(
         data: transaction.data,
         access_list: transaction.access_list,
         format_trace: transaction.format_trace.unwrap_or_default(),
-        allow_insufficient_funds: true,
+        allow_insufficient_funds: false,
         include_state_diff: transaction.include_state_diff.unwrap_or(true),
         gas_limit: transaction.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
-        gas_price: 0,
+        gas_price,
     };
     let call_setup_time = call_setup_start.elapsed();
 

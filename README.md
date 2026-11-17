@@ -18,14 +18,16 @@ before contacting an RPC provider. A chain outside the whitelist returns HTTP
 400 with `{"code":400,"message":"CHAIN_ID_NOT_SUPPORTED"}`. Stateful session
 cleanup (`DELETE`) remains available. Authentication requirements are unchanged.
 
-The local REVM workflow always bypasses sender balance validation and uses a
-transaction gas price of zero, regardless of caller `allowInsufficientFunds` or
-`gasPrice` values. Callers do not need to opt in. Base-fee validation is disabled
-for these simulated transactions, while the actual block base fee and transaction
-value remain unchanged. This permits simulations from unfunded accounts; success
-does not establish that the sender can fund an on-chain transaction. Contracts
-reading `GASPRICE` see zero. Optional upstream `trace_call` state differences and
-the QuickNode execution paths still follow the upstream provider's rules.
+The local REVM workflow uses the request `gasPrice` (decimal gwei), or zero
+when omitted. It does not raise the supplied price to the block base fee.
+Base-fee validation is disabled for simulation, while the actual block base fee
+remains unchanged. Sender balance validation is always enabled: the sender must
+cover `value + gasLimit * gasPrice`. The legacy `allowInsufficientFunds` field
+is accepted but cannot bypass this check. With zero gas price, an account must
+still have enough ETH for the transferred value. Contracts reading `GASPRICE`
+see the selected price. Invalid, negative, or over-precision gas prices return
+HTTP 400. QuickNode paths and optional upstream `trace_call` state differences
+still follow the provider's rules.
 
 The local simulation workflow uses REVM with a direct, cached fork backend.
 It no longer launches Anvil, and `USE_ANVIL` has no effect. QuickNode simulation

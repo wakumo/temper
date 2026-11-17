@@ -50,7 +50,7 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
             let result = match request["method"].as_str().unwrap() {
                 "eth_chainId" => json!("0x1"),
                 "eth_getBlockByNumber" => serde_json::to_value(&block).unwrap(),
-                "eth_getBalance" => json!("0x0"),
+                "eth_getBalance" => json!("0x2a"),
                 "eth_getTransactionCount" => json!("0x0"),
                 "eth_getCode" => {
                     if request["params"][0]
@@ -86,7 +86,7 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
         allow_insufficient_funds: false,
         include_state_diff: false,
         gas_limit: 100_000,
-        gas_price: 20_000_000_000,
+        gas_price: 0,
     };
     let first = evm.call_raw(request()).await.unwrap();
     assert!(first.success);
@@ -145,12 +145,38 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
         "0x0"
     );
 
-    // The HTTP API must enforce the same policy without caller opt-in, even
-    // when legacy fields explicitly request strict funds checks/nonzero fees.
-    for legacy in [
-        json!({}),
-        json!({"allowInsufficientFunds": false, "gasPrice": "200"}),
-        json!({"gasPrice": "ignored"}),
+    // Local execution keeps value funding checks, even for legacy bypass callers.
+    for (options, status, expected_gas_price) in [
+        (json!({}), 200, 0),
+        (
+            json!({"allowInsufficientFunds": false, "gasPrice": "0"}),
+            200,
+            0,
+        ),
+        (
+            json!({"allowInsufficientFunds": true, "value": "43"}),
+            500,
+            0,
+        ),
+        (json!({"value": "43"}), 500, 0),
+        (json!({"gasPrice": "20"}), 500, 0),
+        (json!({"gasPrice": "invalid"}), 400, 0),
+        (json!({"gasPrice": "-1"}), 400, 0),
+        (json!({"gasPrice": "NaN"}), 400, 0),
+        (
+            json!({"gasPrice": "0.000000001", "stateOverrides": {
+                sender.to_string(): {"balance": "100042"}
+            }}),
+            200,
+            1,
+        ),
+        (
+            json!({"value": "0", "stateOverrides": {
+                sender.to_string(): {"balance": "0"}
+            }}),
+            200,
+            0,
+        ),
     ] {
         let config = enso_temper::config::Config {
             fork_url: Some(url.clone()),
@@ -162,16 +188,30 @@ async fn direct_fork_uses_standard_rpc_and_reuses_cached_account_and_storage() {
         let mut body = json!({"chainId":1,"from":sender,"to":target,"value":"42","gasLimit":100000,"includeStateDiff":false});
         body.as_object_mut()
             .unwrap()
-            .extend(legacy.as_object().unwrap().clone());
+            .extend(options.as_object().unwrap().clone());
         let response = warp::test::request()
             .method("POST")
             .json(&body)
             .reply(&route)
             .await;
-        assert_eq!(response.status(), 200, "{:?}", response.body());
+        assert_eq!(
+            response.status(),
+            status,
+            "options={options}: {:?}",
+            response.body()
+        );
         let result: Value = serde_json::from_slice(response.body()).unwrap();
-        assert_eq!(result["success"], true);
-        assert_eq!(result["returnData"], json!(Bytes::from(expected.clone())));
+        if status == 200 {
+            assert_eq!(result["success"], true);
+            let value = body["value"].as_str().unwrap().parse::<u64>().unwrap();
+            let output: Vec<u8> = [42, expected_gas_price, value, 100]
+                .into_iter()
+                .flat_map(|n| U256::from(n).to_be_bytes::<32>())
+                .collect();
+            assert_eq!(result["returnData"], json!(Bytes::from(output)));
+        } else if status == 500 {
+            assert_eq!(result["message"], "EVM_ERROR");
+        }
     }
     server.abort();
 }

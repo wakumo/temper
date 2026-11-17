@@ -64,11 +64,11 @@ pub struct CallRawRequest {
     pub data: Option<AlloyBytes>,
     pub access_list: Option<AccessList>,
     pub format_trace: bool,
-    /// Retained for compatibility; local execution always bypasses this check.
+    /// Retained for compatibility; local execution always validates sender funds.
     pub allow_insufficient_funds: bool,
     pub include_state_diff: bool,
     pub gas_limit: u64,
-    /// Retained for compatibility; local execution always uses zero gas price.
+    /// Transaction gas price in wei.
     pub gas_price: u128,
 }
 
@@ -391,10 +391,10 @@ where
     EthEvm::new(evm, true)
 }
 
-/// Simulations do not require the sender to fund gas or the call value.
+/// Validate sender funds for value and the selected gas price.
 /// Keep the real block base fee visible to contracts, while accepting zero gas price.
 fn configure_simulation_fees(cfg: &mut CfgEnv) {
-    cfg.disable_balance_check = true;
+    cfg.disable_balance_check = false;
     cfg.disable_base_fee = true;
 }
 
@@ -568,8 +568,8 @@ impl Evm {
                 TransactionInputKind::from_str("data").unwrap(),
             )
             .with_nonce(current_nonce)
-            // Enforce zero-fee simulation even for direct Evm callers.
-            .with_gas_price(0)
+            // Preserve caller fees without raising them to the block base fee.
+            .with_gas_price(call.gas_price)
             .with_gas_limit(call.gas_limit);
         let tx_build_time = tx_build_start.elapsed();
 
@@ -985,10 +985,10 @@ mod tests {
     }
 
     #[test]
-    fn simulation_policy_disables_funding_and_base_fee_validation() {
+    fn simulation_policy_keeps_funding_checks_without_base_fee_floor() {
         let mut cfg = CfgEnv::default();
         configure_simulation_fees(&mut cfg);
-        assert!(cfg.disable_balance_check);
+        assert!(!cfg.disable_balance_check);
         assert!(cfg.disable_base_fee);
     }
 
