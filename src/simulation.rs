@@ -16,8 +16,8 @@ use warp::reply::Json;
 use warp::Rejection;
 
 use crate::errors::{
-    EmptyBundleError, IncorrectChainIdError, InvalidBlockNumbersError, InvalidGasPriceError,
-    MultipleChainIdsError, NoURLForChainIdError, StateNotFound,
+    EmptyBundleError, IncorrectChainIdError, InvalidBlockNumbersError, MultipleChainIdsError,
+    NoURLForChainIdError, StateNotFound,
 };
 use crate::evm::StorageOverride;
 use crate::quicknode::simulate_with_quicknode;
@@ -44,9 +44,11 @@ pub struct SimulationRequest {
     pub block_number: Option<u64>,
     pub state_overrides: Option<HashMap<Address, StateOverride>>,
     pub format_trace: Option<bool>,
+    /// Legacy option: local REVM simulation always bypasses balance validation.
     pub allow_insufficient_funds: Option<bool>,
     pub include_state_diff: Option<bool>,
-    pub gas_price: Option<String>, // in gwei format
+    /// In gwei for upstream APIs; ignored by local REVM, which always uses zero.
+    pub gas_price: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -321,20 +323,8 @@ async fn run_warm_stateless(
     }
     let override_time = override_start.elapsed();
 
-    // ⏱️ GAS PRICE PARSING
-    let gas_parse_start = Instant::now();
-    let gas_price = match transaction.gas_price {
-        Some(gas_price_str) => match gas_price_str.parse::<f64>() {
-            Ok(gas_price_gwei) => (gas_price_gwei * 1_000_000_000.0) as u128,
-            Err(e) => {
-                log::error!("Invalid gas price format '{}': {}", gas_price_str, e);
-                return Err(warp::reject::custom(InvalidGasPriceError(gas_price_str)));
-            }
-        },
-        None => 20_000_000_000u128, // Default: 20 Gwei
-    };
-    let gas_parse_time = gas_parse_start.elapsed();
-
+    // Caller fee/funding options are retained for API compatibility, but local
+    // simulation always runs with zero gas price and without balance validation.
     // ⏱️ CALL SETUP
     let call_setup_start = Instant::now();
     let call = CallRawRequest {
@@ -344,10 +334,10 @@ async fn run_warm_stateless(
         data: transaction.data,
         access_list: transaction.access_list,
         format_trace: transaction.format_trace.unwrap_or_default(),
-        allow_insufficient_funds: transaction.allow_insufficient_funds.unwrap_or_default(),
+        allow_insufficient_funds: true,
         include_state_diff: transaction.include_state_diff.unwrap_or(true),
         gas_limit: transaction.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT),
-        gas_price,
+        gas_price: 0,
     };
     let call_setup_time = call_setup_start.elapsed();
 
@@ -376,7 +366,6 @@ async fn run_warm_stateless(
     // 📊 CLEAN PERFORMANCE BENCHMARK
     println!("⏱️  SIMULATION PERFORMANCE:");
     println!("  ├─ State Overrides: {:?}", override_time);
-    println!("  ├─ Gas Price Parse: {:?}", gas_parse_time);
     println!("  ├─ Call Setup:      {:?}", call_setup_time);
     println!("  ├─ EVM Execution:   {:?}", execution_time);
     println!("  ├─ Response Build:  {:?}", response_time);

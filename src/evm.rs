@@ -64,9 +64,11 @@ pub struct CallRawRequest {
     pub data: Option<AlloyBytes>,
     pub access_list: Option<AccessList>,
     pub format_trace: bool,
+    /// Retained for compatibility; local execution always bypasses this check.
     pub allow_insufficient_funds: bool,
     pub include_state_diff: bool,
     pub gas_limit: u64,
+    /// Retained for compatibility; local execution always uses zero gas price.
     pub gas_price: u128,
 }
 
@@ -365,7 +367,6 @@ fn configure_evm_with_db<DB>(
     block: AnyRpcBlock,
     db: DB,
     chain_id: u64,
-    allow_insufficient_funds: bool,
     timestamp_override: Option<u64>,
 ) -> EthEvm<DB, TracingInspector>
 where
@@ -375,7 +376,7 @@ where
 
     let context = EthEvmContext::new(db, revm_primitives::hardfork::SpecId::PRAGUE)
         .modify_cfg_chained(|cfg| configure_chain_id(cfg, chain_id))
-        .modify_cfg_chained(|cfg| configure_balance_check(cfg, allow_insufficient_funds))
+        .modify_cfg_chained(configure_simulation_fees)
         .with_block(block_env);
 
     let evm = RevmEvm::new(
@@ -390,8 +391,11 @@ where
     EthEvm::new(evm, true)
 }
 
-fn configure_balance_check(cfg: &mut CfgEnv, allow_insufficient_funds: bool) {
-    cfg.disable_balance_check = allow_insufficient_funds;
+/// Simulations do not require the sender to fund gas or the call value.
+/// Keep the real block base fee visible to contracts, while accepting zero gas price.
+fn configure_simulation_fees(cfg: &mut CfgEnv) {
+    cfg.disable_balance_check = true;
+    cfg.disable_base_fee = true;
 }
 
 fn configure_chain_id(cfg: &mut CfgEnv, chain_id: u64) {
@@ -451,10 +455,6 @@ fn should_fetch_rpc_trace(include_state_diff: bool) -> bool {
 fn safe_blob_excess_gas_and_price(excess_blob_gas: Option<u64>) -> Option<BlobExcessGasAndPrice> {
     let _ = excess_blob_gas;
     Some(BlobExcessGasAndPrice::new(0, true))
-}
-
-fn effective_gas_price(requested: u128, basefee: u64) -> u128 {
-    requested.max(basefee as u128)
 }
 
 fn block_env_from_block(block: &AnyRpcBlock, timestamp_override: Option<u64>) -> BlockEnv {
@@ -568,10 +568,8 @@ impl Evm {
                 TransactionInputKind::from_str("data").unwrap(),
             )
             .with_nonce(current_nonce)
-            .with_gas_price(effective_gas_price(
-                call.gas_price,
-                self.block.header.base_fee_per_gas().unwrap_or_default(),
-            ))
+            // Enforce zero-fee simulation even for direct Evm callers.
+            .with_gas_price(0)
             .with_gas_limit(call.gas_limit);
         let tx_build_time = tx_build_start.elapsed();
 
@@ -610,7 +608,6 @@ impl Evm {
                 self.block.clone(),
                 override_db,
                 self.chain_id,
-                call.allow_insufficient_funds,
                 self.block_timestamp_override,
             )
         })) {
@@ -988,26 +985,11 @@ mod tests {
     }
 
     #[test]
-    fn effective_gas_price_uses_basefee_when_request_is_lower() {
-        assert_eq!(effective_gas_price(1, 2), 2);
-    }
-
-    #[test]
-    fn configure_balance_check_disables_balance_validation_when_allowed() {
+    fn simulation_policy_disables_funding_and_base_fee_validation() {
         let mut cfg = CfgEnv::default();
-
-        configure_balance_check(&mut cfg, true);
-
+        configure_simulation_fees(&mut cfg);
         assert!(cfg.disable_balance_check);
-    }
-
-    #[test]
-    fn configure_balance_check_keeps_balance_validation_by_default() {
-        let mut cfg = CfgEnv::default();
-
-        configure_balance_check(&mut cfg, false);
-
-        assert!(!cfg.disable_balance_check);
+        assert!(cfg.disable_base_fee);
     }
 
     #[test]
